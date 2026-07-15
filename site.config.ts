@@ -10,7 +10,7 @@ export default siteConfig({
 
   // basic site info (required)
   name: "Rachel's Investment Studio",
-  domain: "nextjs-notion-starter-kit.transitivebullsh.it",
+  domain: "personal-investment-studio-pb6d.vercel.app",
   author: "Rachel",
 
   // open graph metadata (optional)
