@@ -8,6 +8,9 @@ import styles from '@/styles/HomeSnapshot.module.css'
 
 type HomeProps = PageProps & { notionUnavailable?: boolean }
 
+const macroDashboardUrl = 'https://macro-regime-dashboard-peach.vercel.app'
+const financialAnalystUrl = 'https://financial-analyst-agent-y2l6.vercel.app/'
+
 export const getStaticProps = async () => {
   try {
     const props = await resolveNotionPage(domain)
@@ -104,11 +107,32 @@ function HomeSnapshot() {
             <span>📊</span>
             <span>Tools</span>
           </Link>
+          <h2>Research &amp; Market Analysis</h2>
           <div className={styles.rule} />
-          <Link className={styles.simpleCard} href='/tools'>
-            <strong>Investment Tools</strong>
-            <span>Dashboards, financial analysis and systematic research utilities.</span>
-          </Link>
+          <div className={styles.footerGrid}>
+            <a
+              className={styles.simpleCard}
+              href={macroDashboardUrl}
+              target='_blank'
+              rel='noreferrer'
+            >
+              <strong>📈 Macro Regime Dashboard</strong>
+              <span>
+                Cross-market macro regimes, valuation, momentum and portfolio risk translated into transparent global ETF allocation signals.
+              </span>
+            </a>
+            <a
+              className={styles.simpleCard}
+              href={financialAnalystUrl}
+              target='_blank'
+              rel='noreferrer'
+            >
+              <strong>📑 Financial Quality Analyst</strong>
+              <span>
+                AI-powered financial quality analysis using SEC filings, calculated indicators and historical financial trends.
+              </span>
+            </a>
+          </div>
         </section>
 
         <div className={styles.footerGrid}>
