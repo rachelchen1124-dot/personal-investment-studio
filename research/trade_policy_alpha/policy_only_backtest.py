@@ -148,8 +148,9 @@ def within_event_sample(
 ) -> list[tuple[str, float, float]]:
     """Return (event_id, demeaned impact, demeaned market move).
 
-    Single-country events are retained in the raw panel for audit purposes but
-    contribute no identifying variation after event demeaning.
+    Single-country events and multi-country events with no cross-sectional
+    PolicyImpact variation remain in the raw audit panel but do not enter the
+    identifying sample.
     """
     if horizon not in HORIZONS:
         raise ValueError(f"unsupported horizon: {horizon}")
@@ -161,14 +162,17 @@ def within_event_sample(
             continue
         mean_x = sum(r.policy_impact_pct_gdp for r, _ in usable) / len(usable)
         mean_y = sum(float(y) for _, y in usable) / len(usable)
-        for row, y in usable:
-            sample.append(
-                (
-                    event_id,
-                    row.policy_impact_pct_gdp - mean_x,
-                    float(y) - mean_y,
-                )
+        centered = [
+            (
+                event_id,
+                row.policy_impact_pct_gdp - mean_x,
+                float(y) - mean_y,
             )
+            for row, y in usable
+        ]
+        if not any(abs(x) > 1e-15 for _, x, _ in centered):
+            continue
+        sample.extend(centered)
     return sample
 
 
@@ -247,11 +251,6 @@ def estimate_transmission(
     beta = _beta(sample)
     se = _cluster_se(sample, beta)
     event_ids = sorted({event_id for event_id, _, _ in sample})
-    identifying_events = sum(
-        1
-        for event_id in event_ids
-        if any(abs(x) > 0 for e, x, _ in sample if e == event_id)
-    )
 
     boot = _event_bootstrap(sample, bootstrap_reps, seed)
     loo: list[float] = []
@@ -271,7 +270,7 @@ def estimate_transmission(
         t_stat=(beta / se) if se and se > 0 else None,
         n_rows=len(sample),
         n_events=len(event_ids),
-        identifying_events=identifying_events,
+        identifying_events=len(event_ids),
         bootstrap_p05=_quantile(boot, 0.05),
         bootstrap_p50=_quantile(boot, 0.50),
         bootstrap_p95=_quantile(boot, 0.95),
@@ -325,7 +324,8 @@ def walk_forward_policy_only(
             continue
         train_rows = [r for event_id in train_ids for r in groups[event_id]]
         train_sample = within_event_sample(train_rows, market, horizon)
-        if len({e for e, _, _ in train_sample}) < min_train_events:
+        identifying_train_events = {e for e, _, _ in train_sample}
+        if len(identifying_train_events) < min_train_events:
             continue
         try:
             beta_train = _beta(train_sample)
@@ -341,6 +341,8 @@ def walk_forward_policy_only(
             continue
         mean_x = sum(r.policy_impact_pct_gdp for r, _ in usable) / len(usable)
         mean_y = sum(float(y) for _, y in usable) / len(usable)
+        if not any(abs(r.policy_impact_pct_gdp - mean_x) > 1e-15 for r, _ in usable):
+            continue
         for row, y in usable:
             rel_x = row.policy_impact_pct_gdp - mean_x
             rel_y = float(y) - mean_y
@@ -355,7 +357,7 @@ def walk_forward_policy_only(
                     country=row.country,
                     horizon=horizon,
                     market=market,
-                    training_events=len({e for e, _, _ in train_sample}),
+                    training_events=len(identifying_train_events),
                     beta_train=beta_train,
                     relative_policy_impact=rel_x,
                     predicted_relative_move=pred,
