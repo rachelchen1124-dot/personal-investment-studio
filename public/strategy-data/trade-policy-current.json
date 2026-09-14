@@ -1,0 +1,34 @@
+{
+  "status": "research_seed",
+  "as_of_event": "US_CA_MOTOR_2026_07_20",
+  "methodology_stage": "event_and_exposure_engine_v1",
+  "tradable_signal": false,
+  "units": "percent_of_GDP_equivalent_gross_sensitivity",
+  "canada": {
+    "impact": -1.2155,
+    "exposure_to_us_gdp_pct": 2.4309,
+    "tariff_delta_pct": 50.0,
+    "estimate_type": "broad_category_upper_bound"
+  },
+  "mexico": {
+    "impact": 0.0,
+    "reason": "not directly targeted by this Canada-specific event"
+  },
+  "relative_mexico_vs_canada": 1.2155,
+  "interpretation": "Positive value means Mexico has a relative policy advantage versus Canada for this specific event. This is not yet a fair FX return forecast.",
+  "next_gate": "Map proclamation-annex product coverage, then estimate historical FX and 2Y transmission before the metric can become a tradable signal.",
+  "sources": [
+    {
+      "label": "White House — July 20, 2026 Canada motor-vehicle duties",
+      "url": "https://www.whitehouse.gov/presidential-actions/2026/07/imposing-additional-duties-to-offset-canadian-discrimination-against-the-commerce-of-the-united-states-with-respect-to-motor-vehicles/"
+    },
+    {
+      "label": "Statistics Canada — 2024 U.S.-bound motor vehicles and parts exports",
+      "url": "https://www150.statcan.gc.ca/n1/daily-quotidien/250403/g-a001-eng.htm"
+    },
+    {
+      "label": "Statistics Canada — revised 2024 nominal GDP",
+      "url": "https://www150.statcan.gc.ca/n1/en/pub/13-605-x/2025001/article/00004-eng.pdf"
+    }
+  ]
+}
