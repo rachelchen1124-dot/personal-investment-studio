@@ -1,9 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { createHash } from 'node:crypto'
 
 const HTS_REV7_CSV =
   'https://www.usitc.gov/sites/default/files/tata/hts/hts_2025_revision_7_csv.csv'
-const FEDERAL_REGISTER_HTML =
-  'https://www.federalregister.gov/documents/full_text/html/2025/04/07/2025-06063.html'
+const JUSTIA_FEDERAL_REGISTER_MIRROR =
+  'https://regulations.justia.com/regulations/fedreg/2025/04/07/2025-06063.html'
+const OFFICIAL_FEDERAL_REGISTER =
+  'https://www.federalregister.gov/documents/2025/04/07/2025-06063/regulating-imports-with-a-reciprocal-tariff-to-rectify-trade-practices-that-contribute-to-large-and'
+const OFFICIAL_GOVINFO_PDF = 'https://www.govinfo.gov/link/fr/90/15041?link-type=pdf'
 
 export const config = {
   api: { responseLimit: '2mb' },
@@ -23,7 +27,12 @@ function stripHtml(value: string): string {
 }
 
 function uniqueEightDigitCodes(value: string): string[] {
-  return [...new Set(value.match(/\b\d{8}\b/g) ?? [])]
+  const raw = value.match(/\b\d{8}\b/g) ?? []
+  return [...new Set(raw.filter((code) => Number(code.slice(0, 2)) <= 97))]
+}
+
+function sha256Lines(values: string[]): string {
+  return createHash('sha256').update(`${values.join('\n')}\n`).digest('hex')
 }
 
 async function probeUsitc() {
@@ -72,8 +81,8 @@ async function probeUsitc() {
   }
 }
 
-async function probeFederalRegister() {
-  const response = await fetch(FEDERAL_REGISTER_HTML, {
+async function extractAnnexIiFromMirror() {
+  const response = await fetch(JUSTIA_FEDERAL_REGISTER_MIRROR, {
     cache: 'no-store',
     redirect: 'follow',
     headers: {
@@ -82,38 +91,68 @@ async function probeFederalRegister() {
     }
   })
   if (!response.ok) {
-    throw new Error(`Federal Register full-text fetch failed: ${response.status}`)
+    throw new Error(`Federal Register mirror fetch failed: ${response.status}`)
   }
+
   const html = await response.text()
   const text = stripHtml(html)
-  const annexIiMatches = [...text.matchAll(/ANNEX II/gi)].map((match) => match.index ?? -1)
-  const annexIiiMatches = [...text.matchAll(/ANNEX III/gi)].map((match) => match.index ?? -1)
+  const annexIiStarts = [...text.matchAll(/ANNEX\s+II\b/gi)].map((match) => match.index ?? -1)
+  const annexIiiStarts = [...text.matchAll(/ANNEX\s+III\b/gi)].map((match) => match.index ?? -1)
+  if (!annexIiStarts.length || !annexIiiStarts.length) {
+    throw new Error(
+      `Could not locate Annex II/III boundaries: Annex II=${annexIiStarts.length}, Annex III=${annexIiiStarts.length}`
+    )
+  }
 
-  const candidates = annexIiMatches.map((start) => {
-    const end = annexIiiMatches.find((index) => index > start) ?? text.length
-    const window = text.slice(start, end)
-    const codes = uniqueEightDigitCodes(window)
-    return {
-      start,
-      end,
-      chars: window.length,
-      code_count: codes.length,
-      first_codes: codes.slice(0, 12),
-      last_codes: codes.slice(-12),
-      starts_with_expected_code: codes[0] === '05080000',
-      context: window.slice(0, 700)
-    }
-  })
+  const candidates = annexIiStarts
+    .map((start) => {
+      const end = annexIiiStarts.find((index) => index > start)
+      if (end === undefined) return null
+      const window = text.slice(start, end)
+      const codes = uniqueEightDigitCodes(window)
+      return { start, end, window, codes }
+    })
+    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+    .sort((a, b) => b.codes.length - a.codes.length)
+
+  const selected = candidates[0]
+  if (!selected) throw new Error('No Annex II candidate precedes Annex III')
+
+  const codes = selected.codes
+  const first = codes[0] ?? null
+  const last = codes.at(-1) ?? null
+  const audit = {
+    first_expected: first === '05080000',
+    last_expected: last === '85429000',
+    all_eight_digits: codes.every((code) => /^\d{8}$/.test(code)),
+    unique: new Set(codes).size === codes.length,
+    plausible_hts_chapters: codes.every((code) => {
+      const chapter = Number(code.slice(0, 2))
+      return chapter >= 1 && chapter <= 97
+    })
+  }
+  const auditPassed = Object.values(audit).every(Boolean)
+  if (!auditPassed) {
+    throw new Error(`Annex II extraction audit failed: ${JSON.stringify({ first, last, audit })}`)
+  }
 
   return {
     ok: true,
-    status: response.status,
-    source: FEDERAL_REGISTER_HTML,
-    bytes: Buffer.byteLength(html),
-    text_chars: text.length,
-    annex_ii_occurrences: annexIiMatches.length,
-    annex_iii_occurrences: annexIiiMatches.length,
-    candidates
+    machine_extraction_source: JUSTIA_FEDERAL_REGISTER_MIRROR,
+    legal_authority_sources: [OFFICIAL_FEDERAL_REGISTER, OFFICIAL_GOVINFO_PDF],
+    source_role:
+      'Machine-readable OCR/text extraction only. Legal authority remains the official Federal Register / GovInfo publication.',
+    source_bytes: Buffer.byteLength(html),
+    annex_ii_occurrences: annexIiStarts.length,
+    annex_iii_occurrences: annexIiiStarts.length,
+    candidate_counts: candidates.map((candidate) => candidate.codes.length),
+    selected_window_chars: selected.window.length,
+    htsus8_count: codes.length,
+    first_htsus8: first,
+    last_htsus8: last,
+    sha256_newline_file: sha256Lines(codes),
+    audit,
+    htsus8: codes
   }
 }
 
@@ -124,17 +163,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const [usitc, federalRegister] = await Promise.all([
+    const [usitc, annexIi] = await Promise.all([
       probeUsitc().catch((error) => ({
         ok: false,
         error: error instanceof Error ? error.message : String(error)
       })),
-      probeFederalRegister()
+      extractAnnexIiFromMirror()
     ])
+    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800')
     return res.status(200).json({
       status: 'ok',
-      usitc,
-      federal_register: federalRegister
+      event_id: 'US_RECIPROCAL_2025_04_02',
+      usitc_validation_probe: usitc,
+      annex_ii: annexIi
     })
   } catch (error) {
     console.error(error)
