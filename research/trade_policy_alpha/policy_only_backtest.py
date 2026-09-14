@@ -192,8 +192,7 @@ def _cluster_se(sample: Sequence[tuple[str, float, float]], beta: float) -> floa
     for event_id, x, y in sample:
         score_by_event[event_id] += x * (y - beta * x)
     meat = sum(score * score for score in score_by_event.values())
-    # CR1 small-sample correction for one slope after within-event residualisation.
-    correction = (g / (g - 1)) * ((n - 1) / max(1, n - 1))
+    correction = g / (g - 1)
     variance = correction * meat / (xx * xx)
     return math.sqrt(max(0.0, variance))
 
@@ -225,7 +224,6 @@ def _event_bootstrap(
     for _ in range(reps):
         drawn = [rng.choice(event_ids) for _ in event_ids]
         boot: list[tuple[str, float, float]] = []
-        # Give repeated draws unique cluster labels while preserving whole-event rows.
         for j, event_id in enumerate(drawn):
             boot.extend((f"{event_id}#{j}", x, y) for _, x, y in by_event[event_id])
         try:
@@ -287,7 +285,6 @@ def research_gate(rows: Sequence[PanelRow], market: str, horizon: int) -> dict[s
     event_ids = {event_id for event_id, _, _ in sample}
     n_rows = len(sample)
     n_events = len(event_ids)
-    # These are pre-registered research sufficiency thresholds, not optimized trading parameters.
     sufficient = n_rows >= 20 and n_events >= 5
     return {
         "market": market,
@@ -312,8 +309,8 @@ def walk_forward_policy_only(
 
     For each test event, beta is estimated only from strictly earlier events.
     Test-event impacts and realized moves are demeaned cross-sectionally. P&L is
-    simply sign(predicted relative repricing) * realized relative repricing.
-    There is no carry, roll, cost or volatility scaling in this research layer.
+    sign(predicted relative repricing) * realized relative repricing. There is
+    no carry, roll, cost or volatility scaling in this research layer.
     """
     groups = _group(rows)
     ordered = sorted(
@@ -350,6 +347,7 @@ def walk_forward_policy_only(
             pred = beta_train * rel_x
             if pred == 0:
                 continue
+            direction = 1.0 if pred > 0 else -1.0
             trades.append(
                 WalkForwardTrade(
                     event_id=test_event,
@@ -362,7 +360,7 @@ def walk_forward_policy_only(
                     relative_policy_impact=rel_x,
                     predicted_relative_move=pred,
                     realized_relative_move=rel_y,
-                    signed_policy_only_pnl=math.copysign(rel_y, pred),
+                    signed_policy_only_pnl=direction * rel_y,
                 )
             )
     return trades
