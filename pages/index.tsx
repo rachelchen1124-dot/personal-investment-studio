@@ -4,6 +4,7 @@ import type { PageProps } from '@/lib/types'
 import { NotionPage } from '@/components/NotionPage'
 import { domain } from '@/lib/config'
 import { resolveNotionPage } from '@/lib/resolve-notion-page'
+import styles from '@/styles/HomeSnapshot.module.css'
 
 type HomeProps = PageProps & { notionUnavailable?: boolean }
 
@@ -15,9 +16,9 @@ export const getStaticProps = async () => {
   } catch (err) {
     console.error('page error', domain, err)
 
-    // Keep deployments healthy even if Notion's unofficial API rejects a
-    // build-time request. ISR will retry in 10 seconds, while visitors still
-    // receive a usable studio landing page instead of a failed deployment.
+    // The public Notion renderer occasionally rejects Vercel build requests.
+    // Keep the deployment healthy without replacing the studio's information
+    // architecture: render a faithful snapshot of the real homepage instead.
     return {
       props: { notionUnavailable: true },
       revalidate: 10
@@ -25,86 +26,109 @@ export const getStaticProps = async () => {
   }
 }
 
-function FallbackHome() {
+function HomeSnapshot() {
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: '#f7f8fa',
-        color: '#18212b',
-        fontFamily:
-          "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-      }}
-    >
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '20px 7vw',
-          borderBottom: '1px solid #e2e7ec',
-          background: '#fff'
-        }}
-      >
-        <strong>Rachel&apos;s Investment Studio</strong>
-        <nav style={{ display: 'flex', gap: 24, fontSize: 14 }}>
+    <div className={styles.page}>
+      <header className={styles.header}>
+        <Link className={styles.brand} href='/'>
+          <img src='/studio-icon.jpg' alt='' />
+          <span>Rachel&apos;s Investment Studio</span>
+        </Link>
+        <nav className={styles.nav} aria-label='Primary navigation'>
           <Link href='/research'>Research</Link>
-          <Link href='/top-down-strategy'>Top-down Strategy</Link>
+          <Link href='/top-down-strategy'>Strategy Lab</Link>
           <Link href='/portfolio'>Portfolio</Link>
           <Link href='/tools'>Tools</Link>
         </nav>
       </header>
 
-      <section style={{ maxWidth: 980, margin: '0 auto', padding: '110px 7vw' }}>
-        <div
-          style={{
-            fontSize: 12,
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            fontWeight: 700,
-            color: '#64788a',
-            marginBottom: 18
-          }}
-        >
-          Investment Studio
+      <main className={styles.main}>
+        <div className={styles.cover}>
+          <img src='/studio-cover.jpg' alt='London skyline' />
+          <img className={styles.icon} src='/studio-icon.jpg' alt='' />
         </div>
-        <h1
-          style={{
-            fontFamily: "Georgia, 'Times New Roman', serif",
-            fontSize: 'clamp(46px, 7vw, 78px)',
-            lineHeight: 1,
-            letterSpacing: '-0.04em',
-            margin: 0
-          }}
-        >
-          Independent investment research, portfolio analytics, and systematic strategy experiments.
-        </h1>
-        <p style={{ marginTop: 28, maxWidth: 720, fontSize: 18, lineHeight: 1.7, color: '#52606d' }}>
-          The Notion content layer is temporarily unavailable. The deployed strategy applications remain accessible while the site retries the content connection automatically.
-        </p>
-        <div style={{ marginTop: 34 }}>
-          <Link
-            href='/trade-policy-transmission-alpha'
-            style={{
-              display: 'inline-block',
-              padding: '13px 18px',
-              borderRadius: 10,
-              background: '#172536',
-              color: '#fff',
-              fontWeight: 700
-            }}
-          >
-            Open Trade Policy Transmission Alpha →
+
+        <section className={styles.hero}>
+          <h1>Rachel&apos;s Investment Studio</h1>
+          <p>
+            Independent investment research, portfolio analytics, and systematic strategy experiments.
+          </p>
+        </section>
+
+        <section className={styles.section}>
+          <Link className={styles.sectionHeading} href='/research'>
+            <span>✍️</span>
+            <span>Research</span>
+          </Link>
+          <h2>Investment Research Report</h2>
+          <div className={styles.rule} />
+          <Link className={styles.simpleCard} href='/research'>
+            <strong>Investment Research</strong>
+            <span>Company research, investment memos and fundamental analysis.</span>
+          </Link>
+        </section>
+
+        <section className={styles.section}>
+          <Link className={styles.sectionHeading} href='/top-down-strategy'>
+            <span>⏳</span>
+            <span>Top-down Strategy</span>
+          </Link>
+          <h2>Systematic Macro Strategies</h2>
+          <div className={styles.rule} />
+          <Link className={styles.strategyCard} href='/trade-policy-transmission-alpha'>
+            <span className={styles.strategyIcon}>🌐</span>
+            <span>
+              <strong>Trade Policy Transmission Alpha</strong>
+              <p>
+                Systematic global macro strategy built from measurable U.S. trade-policy dispersion across countries.
+              </p>
+            </span>
+            <span className={styles.open}>Open strategy →</span>
+          </Link>
+        </section>
+
+        <section className={styles.section}>
+          <Link className={styles.sectionHeading} href='/portfolio'>
+            <span>📁</span>
+            <span>Portfolio</span>
+          </Link>
+          <div className={styles.rule} />
+          <Link className={styles.simpleCard} href='/portfolio'>
+            <strong>Portfolio</strong>
+            <span>Portfolio construction, risk and performance analytics.</span>
+          </Link>
+        </section>
+
+        <section className={styles.section}>
+          <Link className={styles.sectionHeading} href='/tools'>
+            <span>📊</span>
+            <span>Tools</span>
+          </Link>
+          <div className={styles.rule} />
+          <Link className={styles.simpleCard} href='/tools'>
+            <strong>Investment Tools</strong>
+            <span>Dashboards, financial analysis and systematic research utilities.</span>
+          </Link>
+        </section>
+
+        <div className={styles.footerGrid}>
+          <Link className={styles.simpleCard} href='/about'>
+            <strong>About</strong>
+            <span>About the Investment Studio.</span>
+          </Link>
+          <Link className={styles.simpleCard} href='/contact'>
+            <strong>Contact</strong>
+            <span>Contact and collaboration.</span>
           </Link>
         </div>
-      </section>
-    </main>
+      </main>
+    </div>
   )
 }
 
 export default function NotionDomainPage(props: HomeProps) {
   if (props.notionUnavailable) {
-    return <FallbackHome />
+    return <HomeSnapshot />
   }
 
   return <NotionPage {...props} />
