@@ -6,19 +6,21 @@ const END_DATE = '2026-08-31'
 const POLICY_IMPACT_PCT_GDP = -0.4247525946492328
 const POLICY_INPUT_PATH =
   'research/trade_policy_alpha/data/canada_policy_impact_2026_07_20.json'
-const BOC_URL = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD,V39051/json?start_date=${START_DATE}&end_date=${END_DATE}`
+const CANADA_2Y_SERIES = 'BD.CDN.2YR.DQ.YLD' as const
+const BOC_URL = `https://www.bankofcanada.ca/valet/observations/FXUSDCAD,${CANADA_2Y_SERIES}/json?start_date=${START_DATE}&end_date=${END_DATE}`
 const HORIZONS = [1, 5, 10, 20] as const
 
 type ValetValue = { v?: string }
 type Observation = {
   d: string
   FXUSDCAD?: ValetValue
-  V39051?: ValetValue
+  'BD.CDN.2YR.DQ.YLD'?: ValetValue
 }
 
 type SeriesPoint = { date: string; value: number }
+type SeriesKey = 'FXUSDCAD' | 'BD.CDN.2YR.DQ.YLD'
 
-function parseSeries(observations: Observation[], key: 'FXUSDCAD' | 'V39051') {
+function parseSeries(observations: Observation[], key: SeriesKey) {
   const out: SeriesPoint[] = []
   for (const row of observations) {
     const raw = row[key]?.v
@@ -80,9 +82,14 @@ function ratesResponse(series: SeriesPoint[]) {
   const denominatorShock = Math.abs(POLICY_IMPACT_PCT_GDP)
 
   return {
-    series: 'V39051 — Government of Canada benchmark bond yield, 2 year, daily',
+    series: `${CANADA_2Y_SERIES} — Government of Canada benchmark bond yield, 2 year, daily`,
     unit: 'percent yield; changes reported in basis points',
     baseline,
+    benchmark_roll_caveat: {
+      effective_date: '2026-08-06',
+      note:
+        'Bank of Canada changed the selected 2-year benchmark issue effective 2026-08-06. Horizons spanning that date are descriptive and should be replaced by a constant-maturity/OIS measure in the production transmission model.'
+    },
     event_day_diagnostic: eventDay
       ? {
           ...eventDay,
@@ -98,7 +105,8 @@ function ratesResponse(series: SeriesPoint[]) {
         date: point.date,
         yield_pct: point.value,
         change_from_pre_event_bp: deltaBp,
-        response_per_1pct_gdp_abs_shock_bp: deltaBp / denominatorShock
+        response_per_1pct_gdp_abs_shock_bp: deltaBp / denominatorShock,
+        spans_benchmark_roll: point.date >= '2026-08-06'
       }
     })
   }
@@ -122,7 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const body = (await response.json()) as { observations?: Observation[] }
     const observations = body.observations ?? []
     const fx = parseSeries(observations, 'FXUSDCAD')
-    const rates = parseSeries(observations, 'V39051')
+    const rates = parseSeries(observations, CANADA_2Y_SERIES)
     if (!fx.length || !rates.length) {
       throw new Error(`Missing market series: FX rows=${fx.length}, rates rows=${rates.length}`)
     }
@@ -156,7 +164,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         source: 'Bank of Canada Valet API',
         request_url: BOC_URL,
         fx_series: 'FXUSDCAD',
-        canada_2y_series: 'V39051',
+        canada_2y_series: CANADA_2Y_SERIES,
         start_date: START_DATE,
         end_date: END_DATE
       },
