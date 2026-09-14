@@ -67,6 +67,31 @@ class PolicyOnlyBacktestTests(unittest.TestCase):
         result = estimate_transmission(rows, "fx", 1, bootstrap_reps=100)
         self.assertAlmostEqual(result.beta, -2.0, places=12)
 
+    def test_equal_impact_event_does_not_count_as_identifying(self):
+        rows = self.synthetic_rows()
+        rows.extend(
+            [
+                PanelRow(
+                    event_id="EQUAL",
+                    announcement_date="2025-12-10",
+                    country="X",
+                    policy_impact_pct_gdp=-0.3,
+                    fx_return_1d_pct=0.2,
+                ),
+                PanelRow(
+                    event_id="EQUAL",
+                    announcement_date="2025-12-10",
+                    country="Y",
+                    policy_impact_pct_gdp=-0.3,
+                    fx_return_1d_pct=-0.2,
+                ),
+            ]
+        )
+        sample = within_event_sample(rows, "fx", 1)
+        self.assertNotIn("EQUAL", {event_id for event_id, _, _ in sample})
+        gate = research_gate(rows, "fx", 1)
+        self.assertEqual(gate["n_identifying_events"], 7)
+
     def test_research_gate_requires_event_count_and_rows(self):
         rows = self.synthetic_rows()
         gate = research_gate(rows, "fx", 1)
