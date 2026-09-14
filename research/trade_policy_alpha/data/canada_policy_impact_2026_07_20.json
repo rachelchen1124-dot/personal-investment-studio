@@ -1,0 +1,22 @@
+{
+  "event_id": "US_CA_MOTOR_2026_07_20",
+  "announcement_date": "2026-07-20",
+  "timestamp_precision": "date",
+  "tariff_delta_pct": 50,
+  "legal_scope_htsus8": 439,
+  "htsus8_with_positive_ytd_trade": 397,
+  "zero_trade_htsus8": 42,
+  "trade_statistical_month": "2026-05",
+  "trade_public_release_date": "2026-07-07",
+  "covered_imports_for_consumption_ytd_usd": 8567448331,
+  "covered_imports_for_consumption_annualized_usd": 20561875994.4,
+  "covered_imports_for_consumption_annualized_cad": 28217062427.11512,
+  "canada_nominal_gdp_cad_saar_q1_2026": 3321588000000,
+  "usd_cad_monthly_average_may_2026": 1.3723,
+  "covered_trade_exposure_pct_gdp": 0.8495051892984656,
+  "policy_impact_pct_gdp_equivalent": -0.4247525946492328,
+  "annualization_factor": 2.4,
+  "annualization_note": "Jan-May YTD imports are annualized by 12/5 as an explicit run-rate convention; raw YTD is retained for sensitivity work.",
+  "audit_status": "passed_production_exact_scope",
+  "tradable_signal": false
+}
