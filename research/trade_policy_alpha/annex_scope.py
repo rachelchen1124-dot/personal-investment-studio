@@ -17,6 +17,10 @@ def normalize_hts8(value: str) -> str:
     return f"{digits[:4]}.{digits[4:6]}.{digits[6:]}"
 
 
+def parse_number(value: str) -> float:
+    return float(value.strip().replace(",", "").replace("$", ""))
+
+
 def load_scope(path: Path) -> list[str]:
     codes = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     invalid = [code for code in codes if not HTS8_RE.match(code)]
@@ -38,7 +42,7 @@ def load_trade_values(path: Path) -> dict[str, float]:
             )
         for row in reader:
             code = normalize_hts8(row["htsus_8"])
-            values[code] = values.get(code, 0.0) + float(row["trade_value_local"])
+            values[code] = values.get(code, 0.0) + parse_number(row["trade_value_local"])
     return values
 
 
