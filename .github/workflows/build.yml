@@ -26,6 +26,18 @@ jobs:
       - run: pnpm install --frozen-lockfile --strict-peer-dependencies
       - run: pnpm test
 
+  research-python:
+    name: Test trade-policy research engine
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run research unit tests
+        run: python -m unittest discover -s research/trade_policy_alpha -p 'test_*.py' -v
+
       # TODO Enable those lines below if you use a Redis cache, you'll also need to configure GitHub Repository Secrets
       # env:
       #   REDIS_HOST: ${{ secrets.REDIS_HOST }}

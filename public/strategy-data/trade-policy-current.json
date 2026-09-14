@@ -1,30 +1,44 @@
 {
-  "status": "research_seed",
+  "status": "scope_mapping_in_progress",
   "as_of_event": "US_CA_MOTOR_2026_07_20",
-  "methodology_stage": "event_and_exposure_engine_v1",
+  "methodology_stage": "annex_ii_hts_scope_mapping",
   "tradable_signal": false,
-  "units": "percent_of_GDP_equivalent_gross_sensitivity",
-  "canada": {
-    "impact": -1.2155,
+  "policy_action": {
+    "country": "Canada",
+    "additional_duty_pct": 50.0,
+    "effective_date": "2026-08-22",
+    "scope": "Annex II HTSUS tariff lines",
+    "annex_htsus8_count": 439
+  },
+  "scope_status": {
+    "hts_list_extracted": true,
+    "trade_values_mapped": false,
+    "fair_asset_repricing_estimated": false,
+    "observed_repricing_subtracted": false
+  },
+  "diagnostic_broad_proxy": {
+    "label": "Canada motor vehicles and parts exports to the U.S. / 2024 nominal GDP",
     "exposure_to_us_gdp_pct": 2.4309,
-    "tariff_delta_pct": 50.0,
-    "estimate_type": "broad_category_upper_bound"
+    "naive_50pct_sensitivity_pct_gdp": -1.2155,
+    "use": "Diagnostic only. This broad category is not the proclamation's Annex II scope and must not be interpreted as event PolicyImpact or as an MXN/CAD return forecast."
   },
-  "mexico": {
-    "impact": 0.0,
-    "reason": "not directly targeted by this Canada-specific event"
+  "mxn_cad_case": {
+    "status": "framework_example_only",
+    "message": "Mexico is not directly targeted by this Canada-specific event, but no relative tradable alpha is published until the 439 Annex II tariff lines are valued and a historical FX/rates transmission model is estimated."
   },
-  "relative_mexico_vs_canada": 1.2155,
-  "interpretation": "Positive value means Mexico has a relative policy advantage versus Canada for this specific event. This is not yet a fair FX return forecast.",
-  "next_gate": "Map proclamation-annex product coverage, then estimate historical FX and 2Y transmission before the metric can become a tradable signal.",
+  "next_gate": "Value the 439 Annex II HTSUS tariff lines using point-in-time Canada-to-U.S. trade data, divide by contemporaneously available GDP, then estimate historical FX and 2Y transmission before producing a residual-alpha signal.",
   "sources": [
     {
-      "label": "White House — July 20, 2026 Canada motor-vehicle duties",
+      "label": "White House — July 20, 2026 proclamation",
       "url": "https://www.whitehouse.gov/presidential-actions/2026/07/imposing-additional-duties-to-offset-canadian-discrimination-against-the-commerce-of-the-united-states-with-respect-to-motor-vehicles/"
     },
     {
-      "label": "Statistics Canada — 2024 U.S.-bound motor vehicles and parts exports",
-      "url": "https://www150.statcan.gc.ca/n1/daily-quotidien/250403/g-a001-eng.htm"
+      "label": "White House — Annex II HTSUS scope",
+      "url": "https://www.whitehouse.gov/wp-content/uploads/2026/07/Annex-II-2.pdf"
+    },
+    {
+      "label": "Statistics Canada — CIMT bulk trade data",
+      "url": "https://open.canada.ca/data/dataset/2909a648-5753-4924-878a-b069392d9cde"
     },
     {
       "label": "Statistics Canada — revised 2024 nominal GDP",
