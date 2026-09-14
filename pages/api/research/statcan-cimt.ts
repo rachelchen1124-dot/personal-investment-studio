@@ -14,6 +14,13 @@ type Resource = {
   created?: string | null
 }
 
+type CkanPayload = {
+  result?: {
+    title?: string
+    resources?: Resource[]
+  }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET')
@@ -32,8 +39,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       })
     }
 
-    const payload = await response.json()
-    const resources: Resource[] = payload?.result?.resources || []
+    const payload = (await response.json()) as CkanPayload
+    const resources: Resource[] = payload.result?.resources || []
     const target = resources.filter((resource) => {
       const text = [
         resource.name,
@@ -53,7 +60,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800')
     return res.status(200).json({
       dataset_id: DATASET_ID,
-      dataset_title: payload?.result?.title || null,
+      dataset_title: payload.result?.title || null,
       resource_count: resources.length,
       target_resources: target.map((resource) => ({
         id: resource.id || null,
