@@ -15,8 +15,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const response = await fetch(HTS_REV7_CSV, { cache: 'no-store' })
-    if (!response.ok) throw new Error(`USITC HTS CSV fetch failed: ${response.status}`)
+    const response = await fetch(HTS_REV7_CSV, {
+      cache: 'no-store',
+      redirect: 'follow',
+      headers: {
+        'user-agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36',
+        accept: 'text/csv,text/plain;q=0.9,*/*;q=0.8',
+        'accept-language': 'en-US,en;q=0.9',
+        referer: 'https://hts.usitc.gov/'
+      }
+    })
+    if (!response.ok) {
+      throw new Error(
+        `USITC HTS CSV fetch failed: ${response.status}; server=${response.headers.get('server')}; content-type=${response.headers.get('content-type')}`
+      )
+    }
     const text = await response.text()
     const lines = text.split(/\r?\n/)
     const needles = ['0508.00.00', '05080000', '9903.01.32', 'U.S. note 2', 'subdivision (v)']
@@ -35,6 +49,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({
       status: 'ok',
       source: HTS_REV7_CSV,
+      final_url: response.url,
       bytes: Buffer.byteLength(text),
       line_count: lines.length,
       header: lines[0]?.slice(0, 4000) ?? null,
