@@ -1,5 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { Readable } from 'node:stream'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { open, stat, unlink } from 'node:fs/promises'
+import { Readable, Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { StringDecoder } from 'node:string_decoder'
 import { createInflateRaw, inflateRawSync } from 'node:zlib'
 
@@ -7,6 +10,9 @@ const CENSUS_ZIP_URL =
   'https://www.census.gov/trade/downloads/2026/Merch/im_m/IMDB2605.ZIP'
 const SCOPE_URL =
   'https://raw.githubusercontent.com/rachelchen1124-dot/personal-investment-studio/main/research/trade_policy_alpha/data/US_CA_MOTOR_2026_07_20_annex_ii_htsus8.txt'
+const TMP_ZIP = '/tmp/IMDB2605.ZIP'
+const MAX_ZIP_BYTES = 450 * 1024 * 1024
+const EOCD_SEARCH_BYTES = 65_557
 
 // Point-in-time inputs known before the 2026-07-20 announcement.
 // Q1 2026 nominal GDP at market prices, SAAR, released by Statistics Canada 2026-05-29.
@@ -15,7 +21,6 @@ const CANADA_GDP_CAD = 3_321_588_000_000
 const USD_CAD_MAY_2026 = 1.3723
 const TARIFF_DELTA = 0.5
 const CANADA_CENSUS_CODE = '1220'
-const EOCD_SEARCH_BYTES = 65_557
 
 type ZipEntry = {
   name: string
@@ -25,7 +30,7 @@ type ZipEntry = {
   localHeaderOffset: number
 }
 
-type RemoteZipIndex = {
+type LocalZipIndex = {
   entries: ZipEntry[]
   zipSize: number
   centralOffset: number
@@ -51,33 +56,9 @@ function findEndOfCentralDirectory(buf: Buffer): number {
   throw new Error('ZIP end-of-central-directory record not found')
 }
 
-function contentRangeTotal(value: string | null): number | null {
-  if (!value) return null
-  const match = value.match(/\/(\d+)$/)
-  return match ? Number(match[1]) : null
-}
-
-async function fetchRange(range: string): Promise<{ buffer: Buffer; total: number | null }> {
-  const response = await fetch(CENSUS_ZIP_URL, {
-    headers: { Range: range },
-    cache: 'no-store'
-  })
-
-  if (response.status !== 206) {
-    await response.body?.cancel()
-    throw new Error(
-      `Census server did not honor byte-range request ${range}; status=${response.status}`
-    )
-  }
-
-  const total = contentRangeTotal(response.headers.get('content-range'))
-  return { buffer: Buffer.from(await response.arrayBuffer()), total }
-}
-
 function parseCentralDirectory(buf: Buffer, totalEntries: number): ZipEntry[] {
   const entries: ZipEntry[] = []
   let p = 0
-
   for (let n = 0; n < totalEntries; n += 1) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) {
       throw new Error(`Invalid ZIP central directory signature at relative offset ${p}`)
@@ -89,86 +70,119 @@ function parseCentralDirectory(buf: Buffer, totalEntries: number): ZipEntry[] {
     const extraLength = buf.readUInt16LE(p + 30)
     const commentLength = buf.readUInt16LE(p + 32)
     const localHeaderOffset = buf.readUInt32LE(p + 42)
-
     if (
       compressedSize === 0xffffffff ||
       uncompressedSize === 0xffffffff ||
       localHeaderOffset === 0xffffffff
     ) {
-      throw new Error('ZIP64 entry detected; this endpoint intentionally supports classic ZIP only')
+      throw new Error('ZIP64 entry detected; unsupported by this parser')
     }
-
     const name = buf.toString('utf8', p + 46, p + 46 + nameLength)
-    entries.push({
-      name,
-      method,
-      compressedSize,
-      uncompressedSize,
-      localHeaderOffset
-    })
+    entries.push({ name, method, compressedSize, uncompressedSize, localHeaderOffset })
     p += 46 + nameLength + extraLength + commentLength
   }
   return entries
 }
 
-async function loadRemoteZipIndex(): Promise<RemoteZipIndex> {
-  const tail = await fetchRange(`bytes=-${EOCD_SEARCH_BYTES}`)
-  const eocd = findEndOfCentralDirectory(tail.buffer)
-  const totalEntries = tail.buffer.readUInt16LE(eocd + 10)
-  const centralSize = tail.buffer.readUInt32LE(eocd + 12)
-  const centralOffset = tail.buffer.readUInt32LE(eocd + 16)
-
-  if (
-    totalEntries === 0xffff ||
-    centralSize === 0xffffffff ||
-    centralOffset === 0xffffffff
-  ) {
-    throw new Error('ZIP64 central directory detected; unsupported by this low-memory parser')
+async function downloadZipToDisk(): Promise<number> {
+  const response = await fetch(CENSUS_ZIP_URL, { cache: 'no-store' })
+  if (!response.ok || !response.body) {
+    throw new Error(`Census ZIP fetch failed: ${response.status}`)
+  }
+  const advertised = Number(response.headers.get('content-length') || 0)
+  if (advertised && advertised > MAX_ZIP_BYTES) {
+    await response.body.cancel()
+    throw new Error(
+      `Census ZIP is ${advertised} bytes, above the ${MAX_ZIP_BYTES}-byte /tmp safety limit`
+    )
   }
 
-  const zipSize = tail.total
-  if (!zipSize) throw new Error('Census Range response did not report archive size')
-
-  const central = await fetchRange(
-    `bytes=${centralOffset}-${centralOffset + centralSize - 1}`
-  )
-  return {
-    entries: parseCentralDirectory(central.buffer, totalEntries),
-    zipSize,
-    centralOffset,
-    centralSize
-  }
-}
-
-async function entryDataRange(entry: ZipEntry): Promise<{ start: number; end: number }> {
-  // Local file header is 30 bytes plus filename + extra field. A 4KB probe is ample.
-  const probe = await fetchRange(
-    `bytes=${entry.localHeaderOffset}-${entry.localHeaderOffset + 4095}`
-  )
-  const buf = probe.buffer
-  if (buf.length < 30 || buf.readUInt32LE(0) !== 0x04034b50) {
-    throw new Error(`Invalid ZIP local-header signature for ${entry.name}`)
-  }
-  const nameLength = buf.readUInt16LE(26)
-  const extraLength = buf.readUInt16LE(28)
-  const start = entry.localHeaderOffset + 30 + nameLength + extraLength
-  return { start, end: start + entry.compressedSize - 1 }
-}
-
-async function fetchSmallEntry(entry: ZipEntry): Promise<Buffer> {
-  const { start, end } = await entryDataRange(entry)
-  const response = await fetch(CENSUS_ZIP_URL, {
-    headers: { Range: `bytes=${start}-${end}` },
-    cache: 'no-store'
+  let bytes = 0
+  const guard = new Transform({
+    transform(chunk, _encoding, callback) {
+      bytes += Buffer.byteLength(chunk)
+      if (bytes > MAX_ZIP_BYTES) {
+        callback(new Error(`Census ZIP exceeded ${MAX_ZIP_BYTES}-byte /tmp safety limit`))
+      } else {
+        callback(null, chunk)
+      }
+    }
   })
-  if (response.status !== 206) {
-    await response.body?.cancel()
-    throw new Error(`Census did not honor entry range for ${entry.name}`)
+
+  await pipeline(
+    Readable.fromWeb(response.body as never),
+    guard,
+    createWriteStream(TMP_ZIP, { flags: 'w' })
+  )
+  return bytes
+}
+
+async function loadLocalZipIndex(path: string): Promise<LocalZipIndex> {
+  const info = await stat(path)
+  const zipSize = info.size
+  const tailLength = Math.min(zipSize, EOCD_SEARCH_BYTES)
+  const fh = await open(path, 'r')
+  try {
+    const tail = Buffer.alloc(tailLength)
+    await fh.read(tail, 0, tailLength, zipSize - tailLength)
+    const eocd = findEndOfCentralDirectory(tail)
+    const totalEntries = tail.readUInt16LE(eocd + 10)
+    const centralSize = tail.readUInt32LE(eocd + 12)
+    const centralOffset = tail.readUInt32LE(eocd + 16)
+    if (
+      totalEntries === 0xffff ||
+      centralSize === 0xffffffff ||
+      centralOffset === 0xffffffff
+    ) {
+      throw new Error('ZIP64 central directory detected; unsupported by this parser')
+    }
+    const central = Buffer.alloc(centralSize)
+    await fh.read(central, 0, centralSize, centralOffset)
+    return {
+      entries: parseCentralDirectory(central, totalEntries),
+      zipSize,
+      centralOffset,
+      centralSize
+    }
+  } finally {
+    await fh.close()
   }
-  const compressed = Buffer.from(await response.arrayBuffer())
-  if (entry.method === 0) return compressed
-  if (entry.method === 8) return inflateRawSync(compressed)
-  throw new Error(`Unsupported ZIP compression method ${entry.method} for ${entry.name}`)
+}
+
+async function entryDataRange(path: string, entry: ZipEntry) {
+  const info = await stat(path)
+  const probeLength = Math.min(4096, info.size - entry.localHeaderOffset)
+  const fh = await open(path, 'r')
+  try {
+    const probe = Buffer.alloc(probeLength)
+    await fh.read(probe, 0, probeLength, entry.localHeaderOffset)
+    if (probe.length < 30 || probe.readUInt32LE(0) !== 0x04034b50) {
+      throw new Error(`Invalid ZIP local-header signature for ${entry.name}`)
+    }
+    const nameLength = probe.readUInt16LE(26)
+    const extraLength = probe.readUInt16LE(28)
+    const start = entry.localHeaderOffset + 30 + nameLength + extraLength
+    return { start, end: start + entry.compressedSize - 1 }
+  } finally {
+    await fh.close()
+  }
+}
+
+async function readSmallEntry(path: string, entry: ZipEntry): Promise<Buffer> {
+  if (entry.compressedSize > 10 * 1024 * 1024) {
+    throw new Error(`Refusing to buffer unexpectedly large small entry ${entry.name}`)
+  }
+  const { start } = await entryDataRange(path, entry)
+  const fh = await open(path, 'r')
+  try {
+    const compressed = Buffer.alloc(entry.compressedSize)
+    await fh.read(compressed, 0, entry.compressedSize, start)
+    if (entry.method === 0) return compressed
+    if (entry.method === 8) return inflateRawSync(compressed)
+    throw new Error(`Unsupported ZIP compression method ${entry.method} for ${entry.name}`)
+  } finally {
+    await fh.close()
+  }
 }
 
 function n15(line: string, start: number, end: number): number {
@@ -194,8 +208,8 @@ async function loadScope(): Promise<Set<string>> {
   return scope
 }
 
-async function validateCanadaCountryCode(entry: ZipEntry) {
-  const text = (await fetchSmallEntry(entry)).toString('ascii')
+async function validateCanadaCountryCode(path: string, entry: ZipEntry) {
+  const text = (await readSmallEntry(path, entry)).toString('ascii')
   const lines = text.split(/\r?\n/).filter(Boolean)
   const match = lines.find((line) => line.slice(0, 4) === CANADA_CENSUS_CODE)
   return {
@@ -213,7 +227,6 @@ function processDetailLine(line: string, scope: Set<string>, a: Aggregates) {
   const hts10 = line.slice(0, 10)
   const hts8 = hts10.slice(0, 8)
   if (!scope.has(hts8)) return
-
   a.rowsInScope += 1
   a.scopeCodesSeen.add(hts8)
   a.hts10Seen.add(hts10)
@@ -232,27 +245,19 @@ function processDetailLine(line: string, scope: Set<string>, a: Aggregates) {
   if (conYtd > 0 || genYtd > 0) a.scopeCodesPositive.add(hts8)
 }
 
-async function streamDetailEntry(entry: ZipEntry, scope: Set<string>): Promise<Aggregates> {
-  const { start, end } = await entryDataRange(entry)
-  const response = await fetch(CENSUS_ZIP_URL, {
-    headers: { Range: `bytes=${start}-${end}` },
-    cache: 'no-store'
-  })
-  if (response.status !== 206 || !response.body) {
-    await response.body?.cancel()
-    throw new Error(
-      `Census did not provide a streaming byte-range response for ${entry.name}; status=${response.status}`
-    )
-  }
-
-  let source: Readable = Readable.fromWeb(response.body as never)
+async function streamDetailEntry(
+  path: string,
+  entry: ZipEntry,
+  scope: Set<string>
+): Promise<Aggregates> {
+  const { start, end } = await entryDataRange(path, entry)
+  let source: Readable = createReadStream(path, { start, end })
   if (entry.method === 8) source = source.pipe(createInflateRaw())
   else if (entry.method !== 0) {
-    await response.body.cancel()
     throw new Error(`Unsupported ZIP compression method ${entry.method} for ${entry.name}`)
   }
 
-  const aggregates: Aggregates = {
+  const a: Aggregates = {
     rowsCanada: 0,
     rowsInScope: 0,
     conValueMonthUsd: 0,
@@ -273,7 +278,7 @@ async function streamDetailEntry(entry: ZipEntry, scope: Set<string>): Promise<A
       let line = carry.slice(0, newline)
       carry = carry.slice(newline + 1)
       if (line.endsWith('\r')) line = line.slice(0, -1)
-      processDetailLine(line, scope, aggregates)
+      processDetailLine(line, scope, a)
       newline = carry.indexOf('\n')
     }
     if (carry.length > 1_000_000) {
@@ -281,14 +286,12 @@ async function streamDetailEntry(entry: ZipEntry, scope: Set<string>): Promise<A
     }
   }
   carry += decoder.end()
-  if (carry.trim()) processDetailLine(carry.replace(/\r$/, ''), scope, aggregates)
-  return aggregates
+  if (carry.trim()) processDetailLine(carry.replace(/\r$/, ''), scope, a)
+  return a
 }
 
 export const config = {
-  api: {
-    responseLimit: '2mb'
-  },
+  api: { responseLimit: '2mb' },
   maxDuration: 300
 }
 
@@ -299,7 +302,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const [scope, index] = await Promise.all([loadScope(), loadRemoteZipIndex()])
+    const scope = await loadScope()
+    const streamedZipBytes = await downloadZipToDisk()
+    const index = await loadLocalZipIndex(TMP_ZIP)
+    if (streamedZipBytes !== index.zipSize) {
+      throw new Error(
+        `ZIP download size mismatch: streamed=${streamedZipBytes}, stat=${index.zipSize}`
+      )
+    }
+
     const detail = index.entries.find((x) => /(^|\/)IMP_DETL\.TXT$/i.test(x.name))
     const country = index.entries.find((x) => /(^|\/)COUNTRY\.TXT$/i.test(x.name))
     if (!detail || !country) {
@@ -311,14 +322,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       )
     }
 
-    const countryValidation = await validateCanadaCountryCode(country)
+    const countryValidation = await validateCanadaCountryCode(TMP_ZIP, country)
     if (!countryValidation.validated) {
       throw new Error(
         `Census country-code validation failed: ${JSON.stringify(countryValidation)}`
       )
     }
 
-    const a = await streamDetailEntry(detail, scope)
+    const a = await streamDetailEntry(TMP_ZIP, detail, scope)
     const annualizationFactor = 12 / 5
     const conAnnualizedUsd = a.conValueYtdUsd * annualizationFactor
     const conAnnualizedCad = conAnnualizedUsd * USD_CAD_MAY_2026
@@ -390,7 +401,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         point_in_time_rule:
           'Uses the latest detailed Census trade month publicly released before the July 20 announcement (May 2026, released July 7).',
         implementation:
-          'Remote ZIP central-directory parsing + HTTP Range requests + streaming DEFLATE; full archive is never buffered in serverless memory.',
+          'Census ZIP is streamed to /tmp, then central-directory bytes are read from disk and IMP_DETL is streamed through DEFLATE. The full archive and detail file are never buffered in RAM.',
         tradable_signal: false
       }
     })
@@ -400,5 +411,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       status: 'error',
       error: error instanceof Error ? error.message : String(error)
     })
+  } finally {
+    await unlink(TMP_ZIP).catch(() => undefined)
   }
 }
