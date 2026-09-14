@@ -125,7 +125,6 @@ def calculate_policy_impacts(
         if exposure.scope_coverage is None:
             coverage = 1.0
             estimate_type = "broad_category_upper_bound"
-            tradable_signal = False
             note = (
                 "Coverage share is not yet mapped from the proclamation annex. "
                 "Result is a gross sensitivity upper bound, not fair asset repricing."
@@ -133,8 +132,15 @@ def calculate_policy_impacts(
         else:
             coverage = exposure.scope_coverage
             estimate_type = "mapped_scope_estimate"
-            tradable_signal = True
-            note = "Covered share has been explicitly mapped in the exposure file."
+            note = (
+                "Covered share has been explicitly mapped in the exposure file, but "
+                "PolicyImpact remains an economic shock only until FX/rates transmission "
+                "is validated out of sample."
+            )
+
+        # Exact or mapped legal scope is necessary but not sufficient for a
+        # tradable signal. Phase 2B must validate market transmission first.
+        tradable_signal = False
 
         impact_pct_gdp = -(
             event.tariff_delta_pct / 100.0
@@ -193,8 +199,8 @@ def build_snapshot(results: list[PolicyImpactResult]) -> dict:
             "for this specific event. This is not yet a fair FX return forecast."
         ),
         "next_gate": (
-            "Map proclamation-annex product coverage, then estimate historical FX and 2Y "
-            "transmission before the metric can become a tradable signal."
+            "Validate historical policy-only FX and 2Y transmission with event-level "
+            "inference and chronological out-of-sample tests before any tradable signal."
         ),
         "results": [asdict(x) for x in results],
     }
