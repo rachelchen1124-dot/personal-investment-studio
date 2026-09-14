@@ -22,11 +22,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const needles = ['0508.00.00', '05080000', '9903.01.32', 'U.S. note 2', 'subdivision (v)']
     const matches: Record<string, Array<{ index: number; line: string }>> = {}
     for (const needle of needles) {
-      matches[needle] = []
+      const bucket: Array<{ index: number; line: string }> = []
+      matches[needle] = bucket
       for (let i = 0; i < lines.length; i += 1) {
-        if (lines[i].includes(needle)) {
-          matches[needle].push({ index: i, line: lines[i].slice(0, 4000) })
-          if (matches[needle].length >= 20) break
+        const line = lines[i] ?? ''
+        if (line.includes(needle)) {
+          bucket.push({ index: i, line: line.slice(0, 4000) })
+          if (bucket.length >= 20) break
         }
       }
     }
