@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto'
 
 const HTS_REV7_CSV =
   'https://www.usitc.gov/sites/default/files/tata/hts/hts_2025_revision_7_csv.csv'
-const JUSTIA_FEDERAL_REGISTER_MIRROR =
-  'https://regulations.justia.com/regulations/fedreg/2025/04/07/2025-06063.html'
+const PRESIDENCY_PROJECT_TRANSCRIPTION =
+  'https://www.presidency.ucsb.edu/documents/executive-order-14257-regulating-imports-with-reciprocal-tariff-rectify-trade-practices'
 const OFFICIAL_FEDERAL_REGISTER =
   'https://www.federalregister.gov/documents/2025/04/07/2025-06063/regulating-imports-with-a-reciprocal-tariff-to-rectify-trade-practices-that-contribute-to-large-and'
 const OFFICIAL_GOVINFO_PDF = 'https://www.govinfo.gov/link/fr/90/15041?link-type=pdf'
@@ -30,7 +30,10 @@ function stripHtml(value: string): string {
 
 function uniqueEightDigitCodes(value: string): string[] {
   const raw = value.match(/\b\d{8}\b/g) ?? []
-  return [...new Set(raw.filter((code) => Number(code.slice(0, 2)) <= 97))]
+  return [...new Set(raw.filter((code) => {
+    const chapter = Number(code.slice(0, 2))
+    return chapter >= 1 && chapter <= 97
+  }))]
 }
 
 function sha256Lines(values: string[]): string {
@@ -70,8 +73,8 @@ async function probeUsitc() {
   }
 }
 
-async function extractAnnexIiFromMirror() {
-  const response = await fetch(JUSTIA_FEDERAL_REGISTER_MIRROR, {
+async function extractAnnexIi() {
+  const response = await fetch(PRESIDENCY_PROJECT_TRANSCRIPTION, {
     cache: 'no-store',
     redirect: 'follow',
     headers: {
@@ -80,41 +83,26 @@ async function extractAnnexIiFromMirror() {
     }
   })
   if (!response.ok) {
-    throw new Error(`Federal Register mirror fetch failed: ${response.status}`)
+    throw new Error(`Presidency Project transcription fetch failed: ${response.status}`)
   }
 
   const html = await response.text()
   const text = stripHtml(html)
-  const annexIiStarts = [...text.matchAll(/ANNEX\s+II\b/gi)].map((match) => match.index ?? -1)
-  const annexIiiStarts = [...text.matchAll(/ANNEX\s+III\b/gi)].map((match) => match.index ?? -1)
-  if (!annexIiStarts.length || !annexIiiStarts.length) {
-    throw new Error(
-      `Could not locate Annex II/III boundaries: Annex II=${annexIiStarts.length}, Annex III=${annexIiiStarts.length}`
-    )
+  const annexStart = text.search(/ANNEX\s+II\b/i)
+  if (annexStart < 0) throw new Error('ANNEX II heading not found')
+
+  const afterStart = text.slice(annexStart)
+  const firstBoundary = afterStart.indexOf(FIRST_ANNEX_II_HTSUS8)
+  const lastBoundary = afterStart.lastIndexOf(LAST_ANNEX_II_HTSUS8)
+  if (firstBoundary < 0 || lastBoundary < firstBoundary) {
+    throw new Error('Expected Annex II HTSUS8 boundary codes not found')
   }
 
-  const candidates = annexIiStarts
-    .map((start) => {
-      const end = annexIiiStarts.find((index) => index > start)
-      if (end === undefined) return null
-      const window = text.slice(start, end)
-      const firstBoundary = window.indexOf(FIRST_ANNEX_II_HTSUS8)
-      const lastBoundary = window.lastIndexOf(LAST_ANNEX_II_HTSUS8)
-      if (firstBoundary < 0 || lastBoundary < firstBoundary) return null
-      const boundedWindow = window.slice(
-        firstBoundary,
-        lastBoundary + LAST_ANNEX_II_HTSUS8.length
-      )
-      const codes = uniqueEightDigitCodes(boundedWindow)
-      return { start, end, window: boundedWindow, codes }
-    })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
-    .sort((a, b) => b.codes.length - a.codes.length)
-
-  const selected = candidates[0]
-  if (!selected) throw new Error('No Annex II candidate contains expected boundary codes')
-
-  const codes = selected.codes
+  const boundedWindow = afterStart.slice(
+    firstBoundary,
+    lastBoundary + LAST_ANNEX_II_HTSUS8.length
+  )
+  const codes = uniqueEightDigitCodes(boundedWindow)
   const first = codes[0] ?? null
   const last = codes.at(-1) ?? null
   const audit = {
@@ -125,26 +113,26 @@ async function extractAnnexIiFromMirror() {
     plausible_hts_chapters: codes.every((code) => {
       const chapter = Number(code.slice(0, 2))
       return chapter >= 1 && chapter <= 97
-    })
+    }),
+    expected_published_count: codes.length === 1039
   }
   const auditPassed = Object.values(audit).every(Boolean)
   if (!auditPassed) {
-    throw new Error(`Annex II extraction audit failed: ${JSON.stringify({ first, last, audit })}`)
+    throw new Error(
+      `Annex II extraction audit failed: ${JSON.stringify({ count: codes.length, first, last, audit })}`
+    )
   }
 
   return {
     ok: true,
-    machine_extraction_source: JUSTIA_FEDERAL_REGISTER_MIRROR,
+    machine_extraction_source: PRESIDENCY_PROJECT_TRANSCRIPTION,
     legal_authority_sources: [OFFICIAL_FEDERAL_REGISTER, OFFICIAL_GOVINFO_PDF],
     source_role:
-      'Machine-readable Federal Register transcription for extraction only. Legal authority remains the official Federal Register / GovInfo publication.',
+      'Machine-readable transcription for deterministic extraction only. Legal authority remains the official Federal Register / GovInfo publication.',
     extraction_method:
-      'Locate ANNEX II and the following ANNEX III; bound the transcription by published HTSUS8 endpoints 05080000 and 85429000; extract unique 8-digit HTSUS codes in published order.',
+      'Locate ANNEX II, bound the transcription by published HTSUS8 endpoints 05080000 and 85429000, extract unique 8-digit HTSUS codes in published order, and require the 1,039-line published count.',
     source_bytes: Buffer.byteLength(html),
-    annex_ii_occurrences: annexIiStarts.length,
-    annex_iii_occurrences: annexIiiStarts.length,
-    candidate_counts: candidates.map((candidate) => candidate.codes.length),
-    selected_window_chars: selected.window.length,
+    selected_window_chars: boundedWindow.length,
     htsus8_count: codes.length,
     first_htsus8: first,
     last_htsus8: last,
@@ -166,7 +154,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ok: false,
         error: error instanceof Error ? error.message : String(error)
       })),
-      extractAnnexIiFromMirror()
+      extractAnnexIi()
     ])
     res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800')
     return res.status(200).json({
