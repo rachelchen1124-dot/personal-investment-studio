@@ -8,6 +8,7 @@ on:
       - research/trade_policy_alpha/build_apr2_annex2_exposure.py
       - research/trade_policy_alpha/build_apr2_whole_article_exclusions.py
       - research/trade_policy_alpha/build_apr2_policy_impact_sensitivity.py
+      - research/trade_policy_alpha/run_apr2_policy_impact_sensitivity.py
       - research/trade_policy_alpha/data/section232_auto_scope_2025_04_02.csv
       - .github/workflows/phase2c-apr2-exposure.yml
   workflow_dispatch:
@@ -29,7 +30,7 @@ jobs:
 
       - name: Build GDP-normalized PolicyImpact sensitivity surface
         run: |
-          python research/trade_policy_alpha/build_apr2_policy_impact_sensitivity.py \
+          python research/trade_policy_alpha/run_apr2_policy_impact_sensitivity.py \
             --out-dir /tmp/phase2c-apr2
 
       - name: Show country diagnostics and rank stability
