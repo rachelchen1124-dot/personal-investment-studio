@@ -1,0 +1,43 @@
+{
+  "event_id": "US_RECIPROCAL_2025_04_02",
+  "announcement_date": "2025-04-02",
+  "annex_ii_htsus8_count": 1039,
+  "annex_ii_first_htsus8": "05080000",
+  "annex_ii_last_htsus8": "85429000",
+  "annex_ii_sha256_newline_file": "364de84794cc60a7313d8ca1773a1e4256fd8308051c5894a1d45959f743c7b1",
+  "auto_scope_patterns": {
+    "automobile": 17,
+    "auto_part": 130
+  },
+  "section232_scope_counts": {
+    "steel_ch73_full": 167,
+    "steel_content_sensitive": 12,
+    "aluminum_ch76_full": 20,
+    "aluminum_content_sensitive": 106
+  },
+  "gdp_denominator": {
+    "source": "IMF WEO October 2024",
+    "series": "NGDPD: GDP, current prices, U.S. dollars",
+    "year": 2024,
+    "source_format": "utf16_tab_delimited_values",
+    "countries_resolved": 12
+  },
+  "sensitivity_grid": {
+    "metal_content_share": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "us_content_share": [0.0, 0.2, 0.4],
+    "scenario_rows": 180
+  },
+  "cross_section": {
+    "observable_upper_bound_min_pct_gdp": -3.1315413121,
+    "observable_upper_bound_max_pct_gdp": -0.1181575161,
+    "observable_upper_bound_cross_country_range_pct_gdp": 3.013383796,
+    "observable_upper_bound_population_sd_pct_gdp": 1.0049636965,
+    "rank_stable_across_full_metal_content_grid": true,
+    "rank_changes_across_full_metal_content_grid": 0
+  },
+  "status": {
+    "point_estimate_eligible": false,
+    "interval_sensitivity_eligible": true,
+    "regression_interpretation": "Use the sensitivity surface or cross-sectional rank. Do not label any scenario as exact taxable value until entry-level metal and U.S.-content shares are observed."
+  }
+}
