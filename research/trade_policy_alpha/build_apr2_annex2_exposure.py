@@ -184,18 +184,37 @@ def country_records(zf: zipfile.ZipFile) -> dict[str, str]:
 
 
 def resolve_target_codes(records: dict[str, str]) -> dict[str, str]:
+    """Resolve Census codes conservatively: exact names first, substring only as fallback.
+
+    The earlier permissive substring match incorrectly mapped the alias INDIA to
+    both INDIA and BRITISH INDIAN OCEAN TERRITORIES. Exact aliases are therefore
+    authoritative whenever available; fuzzy containment is only used if no exact
+    alias exists and must still produce one unique result.
+    """
     resolved: dict[str, str] = {}
     for country, meta in TARGETS.items():
         aliases = [str(x).upper() for x in meta["aliases"]]
-        candidates = [
+        exact = [
             code
             for code, name in records.items()
-            if any(alias == name or alias in name for alias in aliases)
+            if any(alias == name for alias in aliases)
         ]
-        if len(candidates) != 1:
-            matched = [(code, records[code]) for code in candidates]
+        if len(exact) == 1:
+            resolved[country] = exact[0]
+            continue
+        if len(exact) > 1:
+            matched = [(code, records[code]) for code in exact]
+            raise ValueError(f"Multiple exact Census matches for {country}: {matched}")
+
+        fuzzy = [
+            code
+            for code, name in records.items()
+            if any(alias in name for alias in aliases)
+        ]
+        if len(fuzzy) != 1:
+            matched = [(code, records[code]) for code in fuzzy]
             raise ValueError(f"Could not uniquely resolve {country}: {matched}")
-        resolved[country] = candidates[0]
+        resolved[country] = fuzzy[0]
     return resolved
 
 
