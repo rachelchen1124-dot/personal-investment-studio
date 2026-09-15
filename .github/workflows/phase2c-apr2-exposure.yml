@@ -6,6 +6,8 @@ on:
       - feature/phase2c-reciprocal-scope-engine
     paths:
       - research/trade_policy_alpha/build_apr2_annex2_exposure.py
+      - research/trade_policy_alpha/build_apr2_whole_article_exclusions.py
+      - research/trade_policy_alpha/data/section232_auto_scope_2025_04_02.csv
       - .github/workflows/phase2c-apr2-exposure.yml
   workflow_dispatch:
 
@@ -21,20 +23,20 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Build point-in-time Annex-II exposure diagnostics
+      - name: Build point-in-time whole-article exclusion diagnostics
         run: |
-          python research/trade_policy_alpha/build_apr2_annex2_exposure.py \
+          python research/trade_policy_alpha/build_apr2_whole_article_exclusions.py \
             --out-dir /tmp/phase2c-apr2
 
       - name: Show country output
         run: |
-          cat /tmp/phase2c-apr2/apr2_annex2_only_country_exposure.csv
-          cat /tmp/phase2c-apr2/apr2_annex2_only_audit.json
+          cat /tmp/phase2c-apr2/apr2_exact_whole_article_exclusions.csv
+          cat /tmp/phase2c-apr2/apr2_exact_whole_article_audit.json
 
       - name: Upload Phase 2C research artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: phase2c-apr2-annex2-exposure
+          name: phase2c-apr2-whole-article-exclusions
           path: /tmp/phase2c-apr2
           if-no-files-found: error
           retention-days: 30
