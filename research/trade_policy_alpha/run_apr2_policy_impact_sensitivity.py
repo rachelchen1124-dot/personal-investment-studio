@@ -3,7 +3,8 @@
 Two source-format issues are handled here without changing the economic definition:
 1. CBP Section 232 PDFs mix 6/8/10-digit HTS patterns.
 2. IMF serves the October-2024 WEO country dataset with an Excel MIME type even though
-   older WEO downloads have also appeared as tab-delimited text.  We support both forms.
+   the payload is a tab-delimited text file (currently UTF-16).  We detect text encoding
+   from the payload and retain a binary-XLS fallback for robustness.
 """
 
 from __future__ import annotations
@@ -27,10 +28,6 @@ def extract_numeric_section_mixed_length(
 
     section = text[start + len(start_heading) : end]
 
-    # Published HTS forms encountered in CBP scope attachments include:
-    # 7610.10.00 (8 digits), 7615.10.2015 (10 digits), 8708.10.60 (8 digits),
-    # plus occasional 6-digit subheading prefixes.  Longest-first alternatives
-    # prevent truncating a 10-digit statistical reporting number to 8 digits.
     raw = re.findall(
         r"(?<!\d)(?:\d{4}\.\d{2}\.\d{4}|\d{4}\.\d{2}\.\d{2}|\d{4}\.\d{2}|\d{4})(?!\d)",
         section,
@@ -90,47 +87,59 @@ def _resolve_gdp(rows: list[dict[str, object]]) -> tuple[dict[str, float], dict[
     }
 
 
+def _parse_tsv(decoded: str) -> list[dict[str, object]]:
+    if "WEO Subject Code" not in decoded or "\t" not in decoded[:5000]:
+        raise ValueError("Decoded WEO text does not contain the expected tab-delimited header")
+    return [dict(row) for row in csv.DictReader(io.StringIO(decoded), delimiter="\t")]
+
+
 def load_weo_gdp_binary_safe() -> tuple[dict[str, float], dict[str, object]]:
     raw = engine.fetch_bytes(engine.IMF_WEO_OCT24, timeout=180)
-    rows: list[dict[str, object]] = []
+    rows: list[dict[str, object]]
     source_format: str
 
-    # Legacy WEO files sometimes use a .xls suffix for tab-delimited values.
-    decoded = raw.decode("utf-8-sig", errors="ignore")
-    if "WEO Subject Code" in decoded and "\t" in decoded[:5000]:
-        source_format = "tab_delimited_values"
-        rows = [dict(row) for row in csv.DictReader(io.StringIO(decoded), delimiter="\t")]
+    # Current October-2024 WEO payload begins W\0E\0O\0..., i.e. UTF-16 text,
+    # despite the legacy .xls suffix / Excel MIME type.
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")) or (len(raw) >= 8 and raw[1:2] == b"\x00"):
+        source_format = "utf16_tab_delimited_values"
+        rows = _parse_tsv(raw.decode("utf-16"))
     else:
-        source_format = "binary_xls"
-        try:
-            workbook = xlrd.open_workbook(file_contents=raw)
-        except Exception as exc:
-            magic = raw[:24].hex()
-            raise ValueError(
-                f"IMF WEO source is neither recognized TSV nor readable XLS; bytes={len(raw)}, magic={magic}"
-            ) from exc
+        decoded = raw.decode("utf-8-sig", errors="ignore")
+        if "WEO Subject Code" in decoded and "\t" in decoded[:5000]:
+            source_format = "utf8_tab_delimited_values"
+            rows = _parse_tsv(decoded)
+        else:
+            source_format = "binary_xls"
+            try:
+                workbook = xlrd.open_workbook(file_contents=raw)
+            except Exception as exc:
+                magic = raw[:24].hex()
+                raise ValueError(
+                    f"IMF WEO source is neither recognized TSV nor readable XLS; bytes={len(raw)}, magic={magic}"
+                ) from exc
 
-        sheet = workbook.sheet_by_index(0)
-        header_row = None
-        for r in range(min(sheet.nrows, 25)):
-            values = [str(sheet.cell_value(r, c)).strip() for c in range(sheet.ncols)]
-            if "WEO Subject Code" in values and "Country" in values and "2024" in values:
-                header_row = r
-                break
-        if header_row is None:
-            raise ValueError("Could not locate WEO header row containing Country / WEO Subject Code / 2024")
+            sheet = workbook.sheet_by_index(0)
+            header_row = None
+            for r in range(min(sheet.nrows, 25)):
+                values = [str(sheet.cell_value(r, c)).strip() for c in range(sheet.ncols)]
+                if "WEO Subject Code" in values and "Country" in values and "2024" in values:
+                    header_row = r
+                    break
+            if header_row is None:
+                raise ValueError("Could not locate WEO header row containing Country / WEO Subject Code / 2024")
 
-        headers = [str(sheet.cell_value(header_row, c)).strip() for c in range(sheet.ncols)]
-        for r in range(header_row + 1, sheet.nrows):
-            row: dict[str, object] = {}
-            for c, header in enumerate(headers):
-                if not header:
-                    continue
-                cell = sheet.cell_value(r, c)
-                if isinstance(cell, float) and cell.is_integer():
-                    cell = int(cell)
-                row[header] = cell
-            rows.append(row)
+            headers = [str(sheet.cell_value(header_row, c)).strip() for c in range(sheet.ncols)]
+            rows = []
+            for r in range(header_row + 1, sheet.nrows):
+                row: dict[str, object] = {}
+                for c, header in enumerate(headers):
+                    if not header:
+                        continue
+                    cell = sheet.cell_value(r, c)
+                    if isinstance(cell, float) and cell.is_integer():
+                        cell = int(cell)
+                    row[header] = cell
+                rows.append(row)
 
     gdp, audit = _resolve_gdp(rows)
     audit["source_format"] = source_format
