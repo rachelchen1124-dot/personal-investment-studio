@@ -1,0 +1,49 @@
+name: Phase 2C April 9 tariff pause
+
+on:
+  push:
+    branches:
+      - feature/phase2c-reciprocal-scope-engine
+    paths:
+      - research/trade_policy_alpha/build_apr9_pause_policy_impact.py
+      - research/trade_policy_alpha/build_apr2_policy_impact_sensitivity.py
+      - research/trade_policy_alpha/run_apr2_policy_impact_sensitivity.py
+      - research/trade_policy_alpha/build_apr2_annex2_exposure.py
+      - research/trade_policy_alpha/build_apr2_whole_article_exclusions.py
+      - research/trade_policy_alpha/data/section232_auto_scope_2025_04_02.csv
+      - .github/workflows/phase2c-apr9-pause.yml
+  workflow_dispatch:
+
+jobs:
+  build-apr9-policy-impact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install research parser dependencies
+        run: python -m pip install --disable-pip-version-check pypdf==6.1.1 xlrd==2.0.2
+
+      - name: Build April 9 tariff-relief PolicyImpact sensitivity surface
+        run: |
+          python research/trade_policy_alpha/build_apr9_pause_policy_impact.py \
+            --out-dir /tmp/phase2c-apr9
+
+      - name: Show April 9 country diagnostics and rank stability
+        run: |
+          cat /tmp/phase2c-apr9/apr9_pause_policy_impact_country_diagnostics.csv
+          cat /tmp/phase2c-apr9/apr9_pause_policy_impact_rank_stability.csv
+          cat /tmp/phase2c-apr9/apr9_pause_policy_impact_audit.json
+
+      - name: Upload April 9 research artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2c-apr9-pause-policy-impact
+          path: /tmp/phase2c-apr9
+          if-no-files-found: error
+          retention-days: 30
