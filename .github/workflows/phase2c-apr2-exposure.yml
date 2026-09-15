@@ -1,0 +1,40 @@
+name: Phase 2C April 2 exposure
+
+on:
+  push:
+    branches:
+      - feature/phase2c-reciprocal-scope-engine
+    paths:
+      - research/trade_policy_alpha/build_apr2_annex2_exposure.py
+      - .github/workflows/phase2c-apr2-exposure.yml
+  workflow_dispatch:
+
+jobs:
+  build-apr2-exposure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build point-in-time Annex-II exposure diagnostics
+        run: |
+          python research/trade_policy_alpha/build_apr2_annex2_exposure.py \
+            --out-dir /tmp/phase2c-apr2
+
+      - name: Show country output
+        run: |
+          cat /tmp/phase2c-apr2/apr2_annex2_only_country_exposure.csv
+          cat /tmp/phase2c-apr2/apr2_annex2_only_audit.json
+
+      - name: Upload Phase 2C research artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2c-apr2-annex2-exposure
+          path: /tmp/phase2c-apr2
+          if-no-files-found: error
+          retention-days: 30
