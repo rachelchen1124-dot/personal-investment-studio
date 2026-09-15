@@ -1,0 +1,13 @@
+country,min_rank_metal_grid,max_rank_metal_grid,rank_range,rank_stable
+Japan,9,9,0,True
+South Korea,5,5,0,True
+India,10,10,0,True
+Indonesia,7,7,0,True
+Malaysia,3,3,0,True
+Thailand,1,1,0,True
+Switzerland,4,4,0,True
+Norway,12,12,0,True
+South Africa,6,6,0,True
+Philippines,11,11,0,True
+Taiwan,2,2,0,True
+Israel,8,8,0,True
