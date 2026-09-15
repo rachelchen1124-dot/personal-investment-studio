@@ -1,0 +1,42 @@
+name: Phase 2C April 2 FX diagnostic
+
+on:
+  push:
+    branches:
+      - feature/phase2c-reciprocal-scope-engine
+    paths:
+      - research/trade_policy_alpha/build_apr2_fx_reaction.py
+      - research/trade_policy_alpha/data/frozen/US_RECIPROCAL_2025_04_02_policy_impact_country_diagnostics.csv
+      - .github/workflows/phase2c-apr2-fx.yml
+  workflow_dispatch:
+
+jobs:
+  build-apr2-fx-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build hourly FX event-reaction diagnostic
+        run: |
+          python research/trade_policy_alpha/build_apr2_fx_reaction.py \
+            --out-dir /tmp/phase2c-apr2-fx
+
+      - name: Show FX panel and cross-section sensitivity
+        run: |
+          cat /tmp/phase2c-apr2-fx/apr2_fx_hourly_reaction.csv
+          cat /tmp/phase2c-apr2-fx/apr2_fx_cross_section_sensitivity.csv
+          cat /tmp/phase2c-apr2-fx/apr2_fx_reaction_audit.json
+
+      - name: Upload Phase 2C FX research artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2c-apr2-fx-diagnostic
+          path: /tmp/phase2c-apr2-fx
+          if-no-files-found: error
+          retention-days: 30
