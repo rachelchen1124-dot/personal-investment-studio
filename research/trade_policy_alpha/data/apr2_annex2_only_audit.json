@@ -1,0 +1,74 @@
+{
+  "announcement_date": "2025-04-02",
+  "archives": {
+    "dec_2024": {
+      "target_annex2_rows": 39637,
+      "target_detail_rows": 628943,
+      "url": "https://www.census.gov/trade/downloads/2024/Merch/im_m/IMDB2412.ZIP",
+      "zip_bytes": 174664430
+    },
+    "jan_2024": {
+      "target_annex2_rows": 9862,
+      "target_detail_rows": 172132,
+      "url": "https://www.census.gov/trade/downloads/2024/Merch/im_m/IMDB2401.ZIP",
+      "zip_bytes": 65358987
+    },
+    "jan_2025": {
+      "target_annex2_rows": 11893,
+      "target_detail_rows": 182565,
+      "url": "https://www.census.gov/trade/downloads/2025/Merch/im_m/IMDB2501.ZIP",
+      "zip_bytes": 138816157
+    }
+  },
+  "event_id": "US_RECIPROCAL_2025_04_02",
+  "next_filters": [
+    "Exact Section 232 steel/aluminum scope",
+    "Exact Section 232 automobile/parts scope",
+    ">=20% U.S.-content taxable-value sensitivity",
+    "Point-in-time GDP denominator"
+  ],
+  "point_in_time_trade_rule": "TTM through 2025-01 = Dec-2024 YTD + Jan-2025 month - Jan-2024 month. January 2025 was the latest monthly Census detail publicly available before the 2025-04-02 announcement; February 2025 was released after it.",
+  "regression_eligible": false,
+  "rows": 12,
+  "scope": {
+    "first_htsus8": "05080000",
+    "htsus8_count": 1039,
+    "last_htsus8": "85429000",
+    "legal_authority_sources": [
+      "https://www.federalregister.gov/documents/2025/04/07/2025-06063/regulating-imports-with-a-reciprocal-tariff-to-rectify-trade-practices-that-contribute-to-large-and",
+      "https://www.govinfo.gov/content/pkg/FR-2025-04-07/pdf/2025-06063.pdf"
+    ],
+    "machine_extraction_source": "https://www.presidency.ucsb.edu/documents/executive-order-14257-regulating-imports-with-reciprocal-tariff-rectify-trade-practices",
+    "sha256_newline_file": "364de84794cc60a7313d8ca1773a1e4256fd8308051c5894a1d45959f743c7b1",
+    "source_role": "Machine-readable transcription only; legal authority remains the official Federal Register / GovInfo publication."
+  },
+  "target_country_codes": {
+    "India": "5330",
+    "Indonesia": "5600",
+    "Israel": "5081",
+    "Japan": "5880",
+    "Malaysia": "5570",
+    "Norway": "4039",
+    "Philippines": "5650",
+    "South Africa": "7910",
+    "South Korea": "5800",
+    "Switzerland": "4419",
+    "Taiwan": "5830",
+    "Thailand": "5490"
+  },
+  "target_country_names": {
+    "India": "INDIA",
+    "Indonesia": "INDONESIA",
+    "Israel": "ISRAEL",
+    "Japan": "JAPAN",
+    "Malaysia": "MALAYSIA",
+    "Norway": "NORWAY",
+    "Philippines": "PHILIPPINES",
+    "South Africa": "SOUTH AFRICA",
+    "South Korea": "KOREA, SOUTH",
+    "Switzerland": "SWITZERLAND",
+    "Taiwan": "TAIWAN",
+    "Thailand": "THAILAND"
+  },
+  "trade_basis": "Imports for consumption (CON_VAL), matching the EO's goods entered for consumption / withdrawn from warehouse for consumption language."
+}
