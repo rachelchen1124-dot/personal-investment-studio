@@ -8,6 +8,8 @@ const JUSTIA_FEDERAL_REGISTER_MIRROR =
 const OFFICIAL_FEDERAL_REGISTER =
   'https://www.federalregister.gov/documents/2025/04/07/2025-06063/regulating-imports-with-a-reciprocal-tariff-to-rectify-trade-practices-that-contribute-to-large-and'
 const OFFICIAL_GOVINFO_PDF = 'https://www.govinfo.gov/link/fr/90/15041?link-type=pdf'
+const FIRST_ANNEX_II_HTSUS8 = '05080000'
+const LAST_ANNEX_II_HTSUS8 = '85429000'
 
 export const config = {
   api: { responseLimit: '2mb' },
@@ -56,28 +58,15 @@ async function probeUsitc() {
     }
   }
   const text = await response.text()
-  const lines = text.split(/\r?\n/)
-  const needles = ['0508.00.00', '05080000', '9903.01.32', 'U.S. note 2', 'subdivision (v)']
-  const matches: Record<string, Array<{ index: number; line: string }>> = {}
-  for (const needle of needles) {
-    const bucket: Array<{ index: number; line: string }> = []
-    matches[needle] = bucket
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i] ?? ''
-      if (line.includes(needle)) {
-        bucket.push({ index: i, line: line.slice(0, 4000) })
-        if (bucket.length >= 20) break
-      }
-    }
-  }
   return {
     ok: true,
     status: response.status,
     final_url: response.url,
     bytes: Buffer.byteLength(text),
-    line_count: lines.length,
-    header: lines[0]?.slice(0, 4000) ?? null,
-    matches
+    contains_first_annex_code:
+      text.includes(FIRST_ANNEX_II_HTSUS8) || text.includes('0508.00.00'),
+    contains_last_annex_code:
+      text.includes(LAST_ANNEX_II_HTSUS8) || text.includes('8542.90.00')
   }
 }
 
@@ -109,21 +98,28 @@ async function extractAnnexIiFromMirror() {
       const end = annexIiiStarts.find((index) => index > start)
       if (end === undefined) return null
       const window = text.slice(start, end)
-      const codes = uniqueEightDigitCodes(window)
-      return { start, end, window, codes }
+      const firstBoundary = window.indexOf(FIRST_ANNEX_II_HTSUS8)
+      const lastBoundary = window.lastIndexOf(LAST_ANNEX_II_HTSUS8)
+      if (firstBoundary < 0 || lastBoundary < firstBoundary) return null
+      const boundedWindow = window.slice(
+        firstBoundary,
+        lastBoundary + LAST_ANNEX_II_HTSUS8.length
+      )
+      const codes = uniqueEightDigitCodes(boundedWindow)
+      return { start, end, window: boundedWindow, codes }
     })
     .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
     .sort((a, b) => b.codes.length - a.codes.length)
 
   const selected = candidates[0]
-  if (!selected) throw new Error('No Annex II candidate precedes Annex III')
+  if (!selected) throw new Error('No Annex II candidate contains expected boundary codes')
 
   const codes = selected.codes
   const first = codes[0] ?? null
   const last = codes.at(-1) ?? null
   const audit = {
-    first_expected: first === '05080000',
-    last_expected: last === '85429000',
+    first_expected: first === FIRST_ANNEX_II_HTSUS8,
+    last_expected: last === LAST_ANNEX_II_HTSUS8,
     all_eight_digits: codes.every((code) => /^\d{8}$/.test(code)),
     unique: new Set(codes).size === codes.length,
     plausible_hts_chapters: codes.every((code) => {
@@ -141,7 +137,9 @@ async function extractAnnexIiFromMirror() {
     machine_extraction_source: JUSTIA_FEDERAL_REGISTER_MIRROR,
     legal_authority_sources: [OFFICIAL_FEDERAL_REGISTER, OFFICIAL_GOVINFO_PDF],
     source_role:
-      'Machine-readable OCR/text extraction only. Legal authority remains the official Federal Register / GovInfo publication.',
+      'Machine-readable Federal Register transcription for extraction only. Legal authority remains the official Federal Register / GovInfo publication.',
+    extraction_method:
+      'Locate ANNEX II and the following ANNEX III; bound the transcription by published HTSUS8 endpoints 05080000 and 85429000; extract unique 8-digit HTSUS codes in published order.',
     source_bytes: Buffer.byteLength(html),
     annex_ii_occurrences: annexIiStarts.length,
     annex_iii_occurrences: annexIiiStarts.length,
