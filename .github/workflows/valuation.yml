@@ -2,7 +2,7 @@ name: Valuation checks
 
 on:
   push:
-    branches: [codex/valuation-analyst-foundation]
+    branches: [main, codex/valuation-analyst-foundation]
   pull_request:
     paths:
       - 'components/Valuation*.tsx'

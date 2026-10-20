@@ -25,11 +25,17 @@ another Studio analyst having run first.
   links, filing dates, actual XBRL periods and annual/YTD LTM derivation. This route
   works without FactSet, paid credentials or broker consensus.
 
-The calculation and data-intake code is implemented. This is not yet an autonomous
-research agent or a live website feature. Public SEC retrieval was tested against
-Microsoft on 2026-10-20; reported financials through 2026-06-30 were read with filing
-references. Bridge claims, economic dilution, market data, analyst orchestration,
-web UI and Excel generation still need work. The optional FactSet adapter consumes
+The calculation foundation and manual data intake are implemented. The guided
+[Valuation Analyst workspace](https://personal-investment-studio-pb6d.vercel.app/valuation-analyst)
+is available under Tools, with separate Historical Financials, Capital Structure,
+Peer Data and optional Forward Estimates uploads. It reads XLSX/CSV/TSV values,
+retains source tables and cell mappings, and exports reviewed or draft intake packs.
+See [manual intake behavior and limits](MANUAL_INTAKE.md).
+
+This is not yet an autonomous research agent or automatic model-generation flow.
+Public SEC retrieval was tested against Microsoft on 2026-10-20; reported financials
+through 2026-06-30 were read with filing references. Bridge claims, economic
+dilution, market data, analyst orchestration and Excel generation still need work. The optional FactSet adapter consumes
 supplied captures; it does not open a server-side FactSet connection. Source
 references are retained but not authenticated by the math engine. See
 [data-intake contracts and current limits](DATA_INTAKE.md).
@@ -133,7 +139,7 @@ RV results remain separately visible; no automatic blend conceals disagreement.
 | 1. Calculation foundation | This module, source contract, synthetic fixtures and regression checks | DCF and RV run separately; known arithmetic benchmarks and invalid-input checks pass |
 | 2. Company data | Public SEC collection and the optional capture adapter are implemented; live Microsoft SEC retrieval passed. Market snapshots, bridge and dilution reconciliation remain. | Every populated field traces to a source, unit and period; missing fields stay missing; no filing published after the information date is used. |
 | 3. Analyst workflow | Independently gather inputs for DCF or RV; propose documented assumptions/scenarios or peers; invoke deterministic tools and inspect results | A request for one method never depends on completion of the other; source facts and analyst estimates stay distinct |
-| 4. Studio and workbook output | Web workflow and editable, formula-linked DCF/RV Excel exports with audit and model-check sheets | Browser, API, calculation and exported workbook agree; an edited assumption recalculates dependent outputs |
+| 4. Studio and workbook output | Guided manual upload workspace is live. Connecting reviewed inputs to calculations and editable, formula-linked DCF/RV Excel exports remains. | Browser, API, calculation and exported workbook agree; an edited assumption recalculates dependent outputs |
 | 5. Pilot and benchmark | Run one selected company from evidence through both outputs | Reconcile historicals, EV/equity bridge and per-share values with a reviewed reference model; document differences |
 
 Public SEC filings are the default source for reported facts. DCF will use
