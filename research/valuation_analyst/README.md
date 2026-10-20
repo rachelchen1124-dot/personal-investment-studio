@@ -21,13 +21,18 @@ another Studio analyst having run first.
 - A capture-based FactSet data adapter, unit/sign normalization, actual/consensus
   separation, historical-vintage checks and independent DCF/RV data coverage.
 - Four-quarter LTM derivation for additive reported flows, with source lineage.
+- A public SEC collector and filing reader with verified issuer identity, accession
+  links, filing dates, actual XBRL periods and annual/YTD LTM derivation. This route
+  works without FactSet, paid credentials or broker consensus.
 
 The calculation and data-intake code is implemented. This is not yet an autonomous
-research agent or a live website feature. The data adapter consumes supplied
-connector captures; it does not open a server-side FactSet connection. Successful
-live provider validation, analyst orchestration, web UI and Excel generation are
-still required. Source references are retained but not authenticated by the math
-engine. See [data-intake contracts and current limits](DATA_INTAKE.md).
+research agent or a live website feature. Public SEC retrieval was tested against
+Microsoft on 2026-10-20; reported financials through 2026-06-30 were read with filing
+references. Bridge claims, economic dilution, market data, analyst orchestration,
+web UI and Excel generation still need work. The optional FactSet adapter consumes
+supplied captures; it does not open a server-side FactSet connection. Source
+references are retained but not authenticated by the math engine. See
+[data-intake contracts and current limits](DATA_INTAKE.md).
 
 ## Run independently
 
@@ -41,13 +46,16 @@ node research/valuation_analyst/run-demo.mjs rv
 node research/valuation_analyst/run-demo.mjs both
 node research/valuation_analyst/inspect-data.mjs
 node research/valuation_analyst/inspect-data.mjs /absolute/path/company-captures.json
+node research/valuation_analyst/collect-sec.mjs --ticker MSFT --as-of 2026-10-20
 ```
 
 The JSON output contains the original input, source references, forecast or peer
 table, valuation outputs and assumptions. All example companies, figures and
 market prices are **invented**. The CLI runs the supplied demonstration fixture;
-it does not fetch or value a ticker. Calculation functions are exported from
-`lib/valuation/engine.ts` for later API and agent integration.
+it does not fetch or value a ticker. The separate `collect-sec` command retrieves
+real SEC actuals and reports coverage; it does not generate a completed valuation.
+Calculation functions are exported from `lib/valuation/engine.ts` for later API
+and agent integration.
 
 ## Input contract
 
@@ -123,16 +131,16 @@ RV results remain separately visible; no automatic blend conceals disagreement.
 | Increment | Deliverable | Acceptance check |
 | --- | --- | --- |
 | 1. Calculation foundation | This module, source contract, synthetic fixtures and regression checks | DCF and RV run separately; known arithmetic benchmarks and invalid-input checks pass |
-| 2. Company data | Capture adapter, verified-identity checks, unit/sign normalization, actual/consensus separation and coverage gates are implemented. Live provider verification and automated retrieval are pending. | Every populated field traces to a source, unit and period; missing fields stay missing; no current vintage is relabeled as historical data. A successful live company read is still required. |
+| 2. Company data | Public SEC collection and the optional capture adapter are implemented; live Microsoft SEC retrieval passed. Market snapshots, bridge and dilution reconciliation remain. | Every populated field traces to a source, unit and period; missing fields stay missing; no filing published after the information date is used. |
 | 3. Analyst workflow | Independently gather inputs for DCF or RV; propose documented assumptions/scenarios or peers; invoke deterministic tools and inspect results | A request for one method never depends on completion of the other; source facts and analyst estimates stay distinct |
 | 4. Studio and workbook output | Web workflow and editable, formula-linked DCF/RV Excel exports with audit and model-check sheets | Browser, API, calculation and exported workbook agree; an edited assumption recalculates dependent outputs |
 | 5. Pilot and benchmark | Run one selected company from evidence through both outputs | Reconcile historicals, EV/equity bridge and per-share values with a reviewed reference model; document differences |
 
-For data sourcing, prefer issuer filings for reported facts and properly dated
-market/consensus records for pricing and forecasts. FactSet availability and
-entitlements must be verified when implementing that route; this increment does
-not promise an existing working data connection. SEC filings alone do not provide
-a forward consensus peer model.
+Public SEC filings are the default source for reported facts. DCF will use
+documented analyst forecasts; RV can use reported LTM metrics and dated market
+snapshots. Optional sourced uploads can supply missing inputs or forward estimates.
+FactSet is optional and its entitlement is not a build dependency. SEC filings do
+not supply broker consensus or market prices; forward RV needs separate evidence.
 
 ## Methodology references
 

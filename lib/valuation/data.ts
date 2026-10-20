@@ -6,6 +6,8 @@ export type DataField =
   | 'ebitda'
   | 'netIncome'
   | 'da'
+  | 'depreciation'
+  | 'amortization'
   | 'capex'
   | 'operatingWorkingCapital'
   | 'cash'
@@ -84,7 +86,7 @@ export type DataRecord = {
   definition: string
   currency: string | null
   source: Source & {
-    provider: 'FactSet' | 'InSync' | 'Analyst' | 'Synthetic' | 'Derived'
+    provider: 'FactSet' | 'InSync' | 'Analyst' | 'Synthetic' | 'Derived' | 'SEC'
     retrievedAt: string
     metric?: string
     auditLink?: string
@@ -98,7 +100,7 @@ export type CompanyData = {
   context: ModelContext
   records: DataRecord[]
   issues: DataIssue[]
-  dataStatus: 'synthetic' | 'provider-input-not-live-verified'
+  dataStatus: 'synthetic' | 'source-input-review-required'
 }
 
 export class ValuationDataError extends Error {
@@ -266,6 +268,8 @@ const fields = new Set<DataField>([
   'ebitda',
   'netIncome',
   'da',
+  'depreciation',
+  'amortization',
   'capex',
   ...stocks,
   'weightedAverageDilutedShares'
@@ -882,7 +886,7 @@ export function normalizeCompanyData(
     issues: normalized.flatMap((record) => record.issues),
     dataStatus: normalized.some((record) => record.source.kind === 'synthetic')
       ? 'synthetic'
-      : 'provider-input-not-live-verified'
+      : 'source-input-review-required'
   }
 }
 

@@ -1,18 +1,64 @@
 # Company data intake
 
-The second increment implements normalization of supplied provider captures and
-independent data-coverage checks for DCF and relative valuation. The first version
-uses the FactSet tool's documented row fields. Live compatibility has **not** been
-verified: both the InSync company lookup and native FactSet entity lookup returned
-HTTP 403 with `Client does not have the required CACCESS: {02MCP}` in the attempted
-pilot. No real Microsoft financials, prices or estimates were retrieved.
+The default data path retrieves public SEC company facts and submissions, verifies
+issuer identity, and normalizes filing-backed actuals for independent DCF/RV
+coverage checks. It requires no FactSet connection, paid credentials or consensus.
+Live Microsoft retrieval passed on 2026-10-20, reading reported periods through
+2026-06-30. This verifies collection and extraction, not a complete valuation.
 
-The adapter does not make network calls, acquire FactSet credentials, or create a
-deployed data connection. A ChatGPT connector connection is not automatically a
-website server connection. Source access and runtime integration remain explicit
-work before the website can gather financials autonomously.
+The optional FactSet capture adapter uses documented tool row fields. Live FactSet
+compatibility remains unverified: both attempted provider lookups returned HTTP
+403 with `Client does not have the required CACCESS: {02MCP}`. That entitlement is
+not required for the public filing path. Neither collector has been deployed into
+the website workflow yet.
 
-## Run the implemented data path
+## Public SEC collection
+
+```sh
+npm run valuation:collect-sec -- --ticker MSFT --as-of 2026-10-20
+node research/valuation_analyst/collect-sec.mjs --ticker MSFT --save-capture /absolute/path/msft-sec.json
+node research/valuation_analyst/collect-sec.mjs --capture /absolute/path/msft-sec.json
+```
+
+Use Node 24. `SEC_USER_AGENT` can supply the application's identity and real
+organization contact; the default identifies this Studio and its public repository.
+Requests are sequential, bounded and limited to fixed SEC hosts. In a runtime that
+uses an outbound proxy, Node's `--use-env-proxy --use-system-ca` flags may be needed.
+Saved captures belong outside the public repository. Network failures and rate
+limits produce blocked diagnostics rather than empty successful results.
+
+`readSecCapture` retains raw units, concept, accession, filing URL, retrieval time
+and the actual start/end dates. Only eligible 10-K/10-Q filings and amendments
+published on or before the information date are considered. Filing-level `fy/fp`
+metadata is not treated as the fact's own period. Conflicting same-date values
+remain gaps. Current issuer metadata is used for identity and business scope;
+this is not a historical security-master or backtesting service.
+
+The initial mapping covers USD US-GAAP revenue, operating income, net income,
+D&A components, PP&E cash capex, cash and separately labeled share disclosures.
+D&A can be derived from reported depreciation plus intangible amortization from
+the same filing/period; its completeness still needs accounting review. Operating
+EBITDA is operating income plus D&A, after SBC, not company-adjusted EBITDA.
+Missing/custom tags and incompatible currencies stay missing. Debt, operating
+working capital, other bridge claims, point-in-time economic dilution and market
+prices require separately sourced reconciliation. Missing claims are not zeroes.
+
+An annual period can also be labeled LTM at its own end date. Interim LTM uses
+annual plus current YTD minus prior comparable YTD, with exact boundaries and
+comparative interim disclosures from the same accession. Unreconciled periods
+are flagged; standalone quarters are never annualized. Weighted-average shares
+are not summed into an interim LTM denominator.
+
+The pure normalizer labels nonsynthetic records `source-input-review-required`:
+successful collection does not establish complete source-to-model reconciliation.
+DCF can proceed using documented analyst forecasts once remaining inputs are
+reviewed. RV can use reported LTM metrics; forward consensus is optional and must
+come from separate dated evidence. SEC facts do not supply stock prices.
+
+Primary API guidance: [SEC EDGAR APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
+and [SEC access policy](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data).
+
+## Optional provider capture inspection
 
 ```sh
 npm run test:valuation
@@ -31,7 +77,7 @@ and `selection`. See `examples/provider-shaped-inputs.mjs` for the full executab
 example. Its `SYN_*` metric codes are invented and must never be submitted to a
 provider. Real captured company data belongs outside the public source tree.
 
-## Capture contract
+## Optional provider capture contract
 
 Each capture retains an ID, provider, endpoint kind, retrieval timestamp with
 timezone, exact request parameters, response, resolved security identifiers,
@@ -70,8 +116,9 @@ FactSet decoder to InSync rows.
 Debt Capital Structure is the preferred FactSet route for debt. Its live response
 mapping remains pending. A fundamentals debt record carries a reconciliation
 flag; its presence alone is not evidence that the preferred debt route worked.
-Filing extraction, arbitrary spreadsheet export parsing and automatic entity
-resolution are also not implemented by this capture inspector.
+Arbitrary spreadsheet export parsing and automatic provider entity resolution
+are not implemented by this capture inspector. The SEC route has a separate
+public ticker-to-CIK lookup and standard-taxonomy filing reader.
 
 ## Dates, accounting periods and lineage
 
@@ -123,8 +170,8 @@ steps exist.
 
 ## Next verification
 
-Resolve the provider's missing `02MCP` entitlement, then obtain a real pilot
-identity, metric discovery results, latest reported actuals, consensus snapshot,
-price, capital-structure records and dilution evidence. Check raw response shapes
-and source-to-field mappings before adding automatic collection or producing a
-real valuation. All bundled examples remain synthetic.
+Reconcile Microsoft's extracted actuals against its original filings, complete
+the bridge and economic dilution evidence, and obtain dated market snapshots.
+Then build the independent analyst workflow for forecast assumptions and peer
+selection. All bundled test examples remain synthetic; the live capture is not
+committed. FactSet access is optional and no longer blocks these steps.

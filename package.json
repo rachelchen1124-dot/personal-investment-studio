@@ -27,6 +27,7 @@
     "test:valuation": "node --test research/valuation_analyst/*.test.mjs",
     "valuation:demo": "node research/valuation_analyst/run-demo.mjs",
     "valuation:inspect-data": "node research/valuation_analyst/inspect-data.mjs",
+    "valuation:collect-sec": "node research/valuation_analyst/collect-sec.mjs",
     "test:lint": "eslint .",
     "test:prettier": "prettier '**/*.{js,jsx,ts,tsx}' --check"
   },
