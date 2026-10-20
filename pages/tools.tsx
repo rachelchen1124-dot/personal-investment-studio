@@ -13,7 +13,7 @@ export default function ToolsPage() {
         <title>Tools | Rachel&apos;s Investment Studio</title>
         <meta
           name='description'
-          content='Investment research and market analysis tools, including the Macro Regime Dashboard and Financial Quality Analyst.'
+          content='Investment research and market analysis tools, including the Macro Regime Dashboard, Financial Quality Analyst and Valuation Analyst.'
         />
       </Head>
 
@@ -68,6 +68,14 @@ export default function ToolsPage() {
                 AI-powered financial quality analysis using SEC filings, calculated indicators and historical financial trends.
               </span>
             </a>
+
+            <Link className={styles.simpleCard} href='/valuation-analyst'>
+              <strong>🧮 Valuation Analyst</strong>
+              <span>
+                Prepare DCF and relative valuation inputs with guided uploads for
+                historical financials, capital structure, peers and optional estimates.
+              </span>
+            </Link>
           </div>
         </section>
       </main>
