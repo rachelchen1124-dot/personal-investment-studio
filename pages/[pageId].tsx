@@ -1,6 +1,8 @@
 import { type GetStaticProps } from 'next'
 
 import { NotionPage } from '@/components/NotionPage'
+import ValuationAnalystPage from '@/components/ValuationAnalystPage'
+import { isValuationAnalystPage, valuationAnalystPageId } from '@/lib/valuation/navigation'
 import { domain, isDev, pageUrlOverrides } from '@/lib/config'
 import { getSiteMap } from '@/lib/get-site-map'
 import { resolveNotionPage } from '@/lib/resolve-notion-page'
@@ -10,6 +12,10 @@ export const getStaticProps: GetStaticProps<PageProps, Params> = async (
   context
 ) => {
   const rawPageId = context.params?.pageId as string
+
+  if (isValuationAnalystPage(rawPageId)) {
+    return { props: { pageId: valuationAnalystPageId } }
+  }
 
   try {
     const props = await resolveNotionPage(domain, rawPageId)
@@ -74,5 +80,9 @@ export async function getStaticPaths() {
 }
 
 export default function NotionDomainDynamicPage(props: PageProps) {
+  if (props.pageId && isValuationAnalystPage(props.pageId)) {
+    return <ValuationAnalystPage />
+  }
+
   return <NotionPage {...props} />
 }

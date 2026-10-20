@@ -132,6 +132,14 @@ function HomeSnapshot() {
                 AI-powered financial quality analysis using SEC filings, calculated indicators and historical financial trends.
               </span>
             </a>
+
+            <Link className={styles.simpleCard} href='/valuation-analyst'>
+              <strong>🧮 Valuation Analyst</strong>
+              <span>
+                Prepare DCF and relative valuation inputs with guided uploads for
+                historical financials, capital structure, peers and optional estimates.
+              </span>
+            </Link>
           </div>
         </section>
 

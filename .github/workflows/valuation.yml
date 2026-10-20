@@ -1,0 +1,30 @@
+name: Valuation checks
+
+on:
+  push:
+    branches: [codex/valuation-analyst-foundation]
+  pull_request:
+    paths:
+      - 'components/Valuation*.tsx'
+      - 'pages/valuation-analyst.tsx'
+      - 'lib/valuation/**'
+      - 'styles/ValuationIntake.module.css'
+      - 'research/valuation_analyst/**'
+      - '.github/workflows/valuation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  valuation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:valuation
+      - run: pnpm exec tsc --noEmit

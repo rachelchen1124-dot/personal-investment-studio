@@ -86,7 +86,15 @@ export type DataRecord = {
   definition: string
   currency: string | null
   source: Source & {
-    provider: 'FactSet' | 'InSync' | 'Analyst' | 'Synthetic' | 'Derived' | 'SEC'
+    provider:
+      | 'FactSet'
+      | 'InSync'
+      | 'Bloomberg'
+      | 'Capital IQ'
+      | 'Analyst'
+      | 'Synthetic'
+      | 'Derived'
+      | 'SEC'
     retrievedAt: string
     metric?: string
     auditLink?: string
