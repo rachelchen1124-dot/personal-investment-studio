@@ -1,7 +1,13 @@
 /** Deterministic valuation tools. Input references are retained, not authenticated. */
 export type Source = {
   id: string
-  kind: 'filing' | 'market' | 'consensus' | 'analyst' | 'synthetic'
+  kind:
+    | 'filing'
+    | 'provider-actual'
+    | 'market'
+    | 'consensus'
+    | 'analyst'
+    | 'synthetic'
   asOf: string
   locator: string
 }
@@ -80,7 +86,9 @@ export type Peer = {
 }
 
 export type RelativeValuationInput = ModelInputs & {
-  capitalization: Capitalization
+  // P/E needs shares and optional price; EV multiples additionally require the full bridge.
+  capitalization: Partial<Capitalization> &
+    Pick<Capitalization, 'dilutedShares'>
   multiple: Multiple
   period: MetricPeriod
   targetMetric: Observation
@@ -167,9 +175,14 @@ function validateModel(input: ModelInputs) {
     nonempty(source.id, 'source.id')
     requireInput(!sourceIds.has(source.id), `Duplicate source ID: ${source.id}`)
     requireInput(
-      ['filing', 'market', 'consensus', 'analyst', 'synthetic'].includes(
-        source.kind
-      ),
+      [
+        'filing',
+        'provider-actual',
+        'market',
+        'consensus',
+        'analyst',
+        'synthetic'
+      ].includes(source.kind),
       `Unsupported source kind: ${source.kind}`
     )
     nonempty(source.locator, `source ${source.id}.locator`)
@@ -236,6 +249,27 @@ function readCapitalization(capitalization: Capitalization, read: Reader) {
     'currentPrice: must be positive when supplied'
   )
   return { ...values, currentPrice }
+}
+
+function readShareCapitalization(
+  capitalization: Partial<Capitalization>,
+  read: Reader
+) {
+  requireInput(
+    capitalization && typeof capitalization === 'object',
+    'capitalization: an object is required'
+  )
+  const dilutedShares = read(capitalization.dilutedShares, 'dilutedShares')
+  requireInput(dilutedShares > 0, 'dilutedShares: must be positive')
+  const currentPrice =
+    capitalization.currentPrice === undefined
+      ? undefined
+      : read(capitalization.currentPrice, 'currentPrice')
+  requireInput(
+    currentPrice === undefined || currentPrice > 0,
+    'currentPrice: must be positive when supplied'
+  )
+  return { dilutedShares, currentPrice }
 }
 
 function bridgeToEquity(
@@ -553,11 +587,15 @@ function percentile(sorted: number[], probability: number) {
 
 export function calculateRelativeValuation(input: RelativeValuationInput) {
   const read = validateModel(input)
-  const capital = readCapitalization(input.capitalization, read)
   requireInput(
     ['EV/Revenue', 'EV/EBITDA', 'EV/EBIT', 'P/E'].includes(input.multiple),
     'Unsupported valuation multiple'
   )
+  const shareCapital = readShareCapitalization(input.capitalization, read)
+  const capital =
+    input.multiple === 'P/E'
+      ? null
+      : readCapitalization(input.capitalization as Capitalization, read)
   validatePeriod(input.period, input.context.valuationDate, 'target period')
   const targetMetric = read(input.targetMetric, 'targetMetric')
   requireInput(
@@ -656,11 +694,11 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
     // P/E directly gives common equity value. Never subtract net debt a second time.
     const enterpriseValue = input.multiple === 'P/E' ? null : impliedValue
     const equityValue =
-      input.multiple === 'P/E'
+      capital === null
         ? impliedValue
         : finiteOutput(bridgeToEquity(impliedValue, capital), 'equityValue')
     const valuePerShare = finiteOutput(
-      equityValue / capital.dilutedShares,
+      equityValue / shareCapital.dilutedShares,
       'valuePerShare'
     )
     return {
@@ -670,9 +708,12 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
       equityValue,
       valuePerShare,
       upside:
-        capital.currentPrice === undefined
+        shareCapital.currentPrice === undefined
           ? null
-          : finiteOutput(valuePerShare / capital.currentPrice - 1, 'upside')
+          : finiteOutput(
+              valuePerShare / shareCapital.currentPrice - 1,
+              'upside'
+            )
     }
   })
   const details = audit(input)
@@ -686,7 +727,7 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
     excluded,
     range,
     median: range[1]!,
-    equityBridge: input.multiple === 'P/E' ? null : capital,
+    equityBridge: capital,
     warnings: [
       ...details.warnings,
       'The 25th/50th/75th percentile outputs describe the supplied peer set; they are not forecast probabilities or confidence intervals.',

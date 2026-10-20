@@ -24,8 +24,9 @@
     "deps:link:notion-client": "pnpm link ../react-notion-x/packages/notion-client",
     "deps:link:react-notion-x": "pnpm link ../react-notion-x/packages/react-notion-x",
     "test": "run-p test:*",
-    "test:valuation": "node --test research/valuation_analyst/engine.test.mjs",
+    "test:valuation": "node --test research/valuation_analyst/*.test.mjs",
     "valuation:demo": "node research/valuation_analyst/run-demo.mjs",
+    "valuation:inspect-data": "node research/valuation_analyst/inspect-data.mjs",
     "test:lint": "eslint .",
     "test:prettier": "prettier '**/*.{js,jsx,ts,tsx}' --check"
   },

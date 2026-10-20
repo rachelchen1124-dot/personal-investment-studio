@@ -143,6 +143,8 @@ test('P/E produces equity value directly and does not deduct debt twice', () => 
   close(result.median.valuePerShare, 20)
   assert.equal(result.median.enterpriseValue, null)
   assert.equal(result.equityBridge, null)
+  input.capitalization = { dilutedShares: observation(100) }
+  close(calculateRelativeValuation(input).median.valuePerShare, 20)
 })
 
 test('EV/Revenue and EV/EBIT use the same enterprise-to-common-equity bridge', () => {

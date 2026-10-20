@@ -1,4 +1,4 @@
-# Valuation Analyst — first build increment
+# Valuation Analyst — implementation
 
 This module belongs to Rachel's Investment Studio. The existing Notion entry is
 [Valuation Analyst](https://app.notion.com/p/39e61c547d808010b8d7eaadcb519a9b),
@@ -18,11 +18,16 @@ another Studio analyst having run first.
 - A CAPM/WACC calculation tool for common-equity/debt capital structures.
 - Shared source-referenced inputs, explicit dates and units, and transparent
   synthetic examples. No external data, API keys or new packages are required.
+- A capture-based FactSet data adapter, unit/sign normalization, actual/consensus
+  separation, historical-vintage checks and independent DCF/RV data coverage.
+- Four-quarter LTM derivation for additive reported flows, with source lineage.
 
-This is the calculation foundation, not an autonomous research agent or a live
-website feature. Data acquisition, financial normalization, agent orchestration,
-web interface and Excel generation are the next increments. Source references
-supplied by a caller are retained but their contents are not authenticated.
+The calculation and data-intake code is implemented. This is not yet an autonomous
+research agent or a live website feature. The data adapter consumes supplied
+connector captures; it does not open a server-side FactSet connection. Successful
+live provider validation, analyst orchestration, web UI and Excel generation are
+still required. Source references are retained but not authenticated by the math
+engine. See [data-intake contracts and current limits](DATA_INTAKE.md).
 
 ## Run independently
 
@@ -30,10 +35,12 @@ Use Node 24, as required by this repository. These commands work before installi
 the website's dependencies:
 
 ```sh
-node --test research/valuation_analyst/engine.test.mjs
+node --test research/valuation_analyst/*.test.mjs
 node research/valuation_analyst/run-demo.mjs dcf
 node research/valuation_analyst/run-demo.mjs rv
 node research/valuation_analyst/run-demo.mjs both
+node research/valuation_analyst/inspect-data.mjs
+node research/valuation_analyst/inspect-data.mjs /absolute/path/company-captures.json
 ```
 
 The JSON output contains the original input, source references, forecast or peer
@@ -116,7 +123,7 @@ RV results remain separately visible; no automatic blend conceals disagreement.
 | Increment | Deliverable | Acceptance check |
 | --- | --- | --- |
 | 1. Calculation foundation | This module, source contract, synthetic fixtures and regression checks | DCF and RV run separately; known arithmetic benchmarks and invalid-input checks pass |
-| 2. Company data | Issuer/security resolution; filing-backed historicals; bridge items; dated market data; FactSet exports or supported connector data for consensus | Every populated field traces to a source, unit and period; missing fields stay missing; no current data leaks into historical runs |
+| 2. Company data | Capture adapter, verified-identity checks, unit/sign normalization, actual/consensus separation and coverage gates are implemented. Live provider verification and automated retrieval are pending. | Every populated field traces to a source, unit and period; missing fields stay missing; no current vintage is relabeled as historical data. A successful live company read is still required. |
 | 3. Analyst workflow | Independently gather inputs for DCF or RV; propose documented assumptions/scenarios or peers; invoke deterministic tools and inspect results | A request for one method never depends on completion of the other; source facts and analyst estimates stay distinct |
 | 4. Studio and workbook output | Web workflow and editable, formula-linked DCF/RV Excel exports with audit and model-check sheets | Browser, API, calculation and exported workbook agree; an edited assumption recalculates dependent outputs |
 | 5. Pilot and benchmark | Run one selected company from evidence through both outputs | Reconcile historicals, EV/equity bridge and per-share values with a reviewed reference model; document differences |
