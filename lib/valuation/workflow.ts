@@ -327,6 +327,35 @@ export function initialSettings(
   }
 }
 
+export function fillValuationDefaults(settings: RunSettings): RunSettings {
+  return {
+    ...settings,
+    wacc: settings.wacc.trim() ? settings.wacc : '10',
+    terminalGrowth: settings.terminalGrowth.trim()
+      ? settings.terminalGrowth
+      : '2.5',
+    terminalRoic: settings.terminalRoic.trim() ? settings.terminalRoic : '12'
+  }
+}
+
+export function fillForecastDefaults(
+  settings: RunSettings,
+  model: ReturnType<typeof prepareModel>
+): RunSettings {
+  const historical = initialSettings(model).forecasts
+  return {
+    ...settings,
+    forecasts: settings.forecasts.map((row, index) => ({
+      growth: row.growth.trim() ? row.growth : '5',
+      margin: row.margin.trim() ? row.margin : historical[index]!.margin,
+      tax: row.tax.trim() ? row.tax : '25',
+      da: row.da.trim() ? row.da : historical[index]!.da,
+      capex: row.capex.trim() ? row.capex : historical[index]!.capex,
+      wc: row.wc.trim() ? row.wc : historical[index]!.wc
+    }))
+  }
+}
+
 function shared(
   records: NormalizedManual[],
   context: IntakeContext,
@@ -340,7 +369,7 @@ function shared(
   )
   requireValue(
     settings.sourceReview,
-    'Confirm the source dates, identities, currency and units below.'
+    'Confirm the source dates, identities, currency and units above.'
   )
   requireValue(
     settings.capitalReview,

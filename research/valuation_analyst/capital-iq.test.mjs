@@ -12,6 +12,8 @@ import {
 import {
   executeDcf,
   executeRelative,
+  fillForecastDefaults,
+  fillValuationDefaults,
   initialSettings,
   peerPreview,
   prepareModel
@@ -187,6 +189,74 @@ function settingsFor(records) {
     }
   return settings
 }
+
+test('valuation defaults fill only blank valuation rates without editing the operating forecast', () => {
+  const settings = initialSettings(prepareModel(mapped(), context))
+  const before = structuredClone(settings)
+  const filled = fillValuationDefaults(settings)
+  assert.equal(filled.wacc, '10')
+  assert.equal(filled.terminalGrowth, '2.5')
+  assert.equal(filled.terminalRoic, '12')
+  assert.deepEqual(filled.forecasts, before.forecasts)
+  assert.deepEqual(settings, before)
+  const edited = {
+    ...settings,
+    wacc: '8.8',
+    terminalGrowth: '1',
+    terminalRoic: '0'
+  }
+  assert.deepEqual(fillValuationDefaults(edited), edited)
+})
+
+test('forecast defaults fill blank table cells, preserve manual entries and never change valuation rates', () => {
+  const model = prepareModel(mapped(), context)
+  const settings = {
+    ...initialSettings(model),
+    wacc: '8.8',
+    terminalGrowth: '1',
+    terminalRoic: '12'
+  }
+  settings.forecasts[0] = {
+    growth: '0',
+    margin: '21',
+    tax: '0',
+    da: '',
+    capex: '0',
+    wc: ''
+  }
+  settings.forecasts[1] = {
+    growth: '',
+    margin: '',
+    tax: '',
+    da: '',
+    capex: '',
+    wc: ''
+  }
+  const before = structuredClone(settings)
+  const filled = fillForecastDefaults(settings, model)
+  assert.equal(filled.wacc, '8.8')
+  assert.equal(filled.terminalGrowth, '1')
+  assert.equal(filled.terminalRoic, '12')
+  assert.equal(filled.forecasts[0].growth, '0')
+  assert.equal(filled.forecasts[0].tax, '0')
+  assert.equal(filled.forecasts[0].margin, '21')
+  assert.equal(filled.forecasts[0].capex, '0')
+  assert.equal(filled.forecasts[0].da, initialSettings(model).forecasts[0].da)
+  assert.deepEqual(filled.forecasts[1], {
+    ...initialSettings(model).forecasts[1],
+    growth: '5',
+    tax: '25'
+  })
+  assert.deepEqual(settings, before)
+  const missing = prepareModel(
+    mapped().filter((record) => record.field !== 'da'),
+    context
+  )
+  assert.equal(
+    fillForecastDefaults(initialSettings(missing), missing).forecasts[0].da,
+    ''
+  )
+})
 
 test('linked Excel forecasts, bridge and nine sensitivity cells reconcile to the valuation engine', () => {
   const records = mapped(),
@@ -449,7 +519,9 @@ test('missing inputs, currency errors, unreviewed assumptions and economic dilut
   )
   assert.throws(
     () => executeDcf(records, context, { ...settings, sourceReview: false }),
-    /Confirm the source/
+    {
+      message: 'Confirm the source dates, identities, currency and units above.'
+    }
   )
   const wrongCurrency = records.map((record) =>
     record.field === 'revenue' ? { ...record, currency: 'EUR' } : record
