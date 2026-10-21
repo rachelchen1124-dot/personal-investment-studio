@@ -1356,6 +1356,7 @@ export function ValuationDataIntake() {
         <ValuationModelRunner
           key={modelKey}
           records={records}
+          files={uploads}
           context={{ company, issuerId, valuationDate, mode }}
           onReview={() => setStage('review')}
         />

@@ -31,14 +31,20 @@ is available under Tools, with separate Historical Financials, Capital Structure
 Peer Data and optional Forward Estimates uploads. It reads XLSX/CSV/TSV values,
 maps supported native Capital IQ layouts, retains source tables/cell mappings, and
 connects reviewed inputs and explicit analyst assumptions to independent DCF/RV
-calculations, sensitivity tables and Excel-readable CSV valuation reports. Existing
+calculations, sensitivity tables and formula-linked XLSX models. The XLSX export
+includes a valuation summary, editable DCF drivers and equity bridge, native
+two-variable Excel sensitivity, historical financials, separate consensus and
+source observations, original historical source tables, and a comps build when
+RV has been calculated. A separate CSV report remains available. Existing
 intake JSON packages can be reopened without downloading the workbooks again.
 See [manual intake behavior and limits](MANUAL_INTAKE.md).
 
 This is a guided deterministic valuation workflow, not an autonomous research agent.
 Public SEC retrieval was tested against Microsoft on 2026-10-20; reported financials
 through 2026-06-30 were read with filing references. Bridge claims, economic
-dilution, market data, analyst orchestration and Excel generation still need work. The optional FactSet adapter consumes
+dilution, market data and analyst orchestration still need work. Detailed forecast
+balance sheets, debt schedules and NOL schedules require additional inputs and
+are not fabricated in the Excel export. The optional FactSet adapter consumes
 supplied captures; it does not open a server-side FactSet connection. Source
 references are retained but not authenticated by the math engine. See
 [data-intake contracts and current limits](DATA_INTAKE.md).
