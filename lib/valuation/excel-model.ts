@@ -28,6 +28,7 @@ export type ExcelStyle =
   | 'date'
   | 'inputDate'
   | 'check'
+  | 'hidden'
 export type ExcelCell = {
   address: string
   value: ExcelValue
@@ -72,6 +73,20 @@ const plusYears = (date: string, years: number) => {
   const result = new Date(date + 'T00:00:00Z')
   result.setUTCFullYear(result.getUTCFullYear() + years)
   return result.toISOString().slice(0, 10)
+}
+function noteLines(value: string) {
+  const lines: string[] = []
+  for (const paragraph of value.replaceAll('\r', '').split('\n')) {
+    let text = paragraph.trim()
+    while (text.length > 125) {
+      const space = text.lastIndexOf(' ', 125)
+      const end = space > 0 ? space : 125
+      lines.push(text.slice(0, end))
+      text = text.slice(end).trimStart()
+    }
+    lines.push(text)
+  }
+  return lines
 }
 function sheet(
   name: string,
@@ -708,13 +723,14 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       'Native Excel What-If Data Table linked to E7 (WACC), E8 (growth) and E62 (value per share).',
       'note'
     )
-    w.formula('C72', 'E62', w.get('E62'), 'price')
+    w.put('C72', 'WACC / terminal growth', 'header')
+    w.formula('E72', 'E62', w.get('E62'), 'hidden')
     const growthOffsets =
       typeof g === 'number' && g < 0.005 ? [0, 0.005, 0.01] : [-0.005, 0, 0.005]
     const waccOffsets = [-0.01, 0, 0.01]
     for (const [index, offset] of growthOffsets.entries())
       w.calc(
-        excelColumn(index + 3) + '72',
+        excelColumn(index + 5) + '72',
         `$E$8+(${offset})`,
         ['E8'],
         (a) => a + offset,
@@ -723,7 +739,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
 
     for (const [index, offset] of waccOffsets.entries())
       w.calc(
-        'C' + (index + 73),
+        'E' + (index + 73),
         `$E$7+(${offset})`,
         ['E7'],
         (a) => a + offset,
@@ -732,8 +748,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
 
     for (let r = 0; r < 3; r++)
       for (let c = 0; c < 3; c++) {
-        const wc = w.get('C' + (r + 73)),
-          gr = w.get(excelColumn(c + 3) + '72'),
+        const wc = w.get('E' + (r + 73)),
+          gr = w.get(excelColumn(c + 5) + '72'),
           terminalNopat = w.get('E38'),
           shares = w.get('E60')
         let value: ExcelValue = 'n.a.'
@@ -769,9 +785,9 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
             shares
           if (!Number.isFinite(value)) value = 'n.a.'
         }
-        w.put(excelColumn(c + 3) + (r + 73), value, 'price')
+        w.put(excelColumn(c + 5) + (r + 73), value, 'price')
       }
-    dcfSheet.dataTable = { range: 'C72:F75', rowInput: 'E8', columnInput: 'E7' }
+    dcfSheet.dataTable = { range: 'E72:H75', rowInput: 'E8', columnInput: 'E7' }
     w.section(78, 'Model basis and analyst notes')
     w.put(
       'C79',
@@ -793,11 +809,10 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       'Terminal ROIC applies to terminal reinvestment. Years 1–5 reinvestment follows capex, D&A and working capital inputs.',
       'note'
     )
-    w.put(
-      'C83',
-      settings.assumptionsNote || 'No additional analyst note supplied.',
-      'note'
-    )
+    for (const [index, line] of noteLines(
+      settings.assumptionsNote || 'No additional analyst note supplied.'
+    ).entries())
+      w.put('C' + (83 + index), line, 'note')
   }
 
   if (consensus) {
