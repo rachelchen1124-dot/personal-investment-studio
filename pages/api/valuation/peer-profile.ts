@@ -5,7 +5,7 @@ import {
   validatePeerRequest
 } from '@/lib/valuation/peer-research-server'
 
-export const config = { maxDuration: 60 }
+export const config = { maxDuration: 90 }
 
 export default async function handler(
   req: NextApiRequest,

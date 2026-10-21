@@ -94,12 +94,19 @@ only annual reports filed on or before the valuation date; current metadata is
 not represented as a historical snapshot. Missing reports, unsupported exchanges,
 identity ambiguities and blocked source requests remain visible. No company
 description is invented and no paid vendor entitlement is required. The endpoint
-uses fixed SEC hosts, bounded responses, serial requests and short-lived caches.
+uses fixed SEC and Wikimedia hosts, bounded responses, serial requests and short-lived caches.
 If the live SEC ticker directory is unavailable to the host, a dated copy of
-the public directory provides the CIK lookup. The live submissions response must
-still match that CIK and ticker before any issuer profile is accepted. The cache
+the public directory provides the CIK lookup. Before accepting an SEC profile,
+the live submissions response must still match that CIK and ticker. The cache
 capture date remains visible; it does not become a cached financial fact or a
 historical profile snapshot.
+When SEC issuer retrieval is unavailable, use independent Wikidata / Wikipedia
+background only after matching the Wikidata CIK to the SEC directory, or matching
+both the SEC legal company name and the current Wikipedia infobox exchange and
+ticker. A conflicting CIK, ambiguous match or historical-only listing is rejected.
+This fallback is labeled by provider, retrieval date, identity check and source
+URL, with Wikipedia excerpt attribution. It supplies current background only;
+no financial values or historical SEC filings are inferred from it.
 
 Two independent optional buttons populate blank inputs. **Fill valuation
 defaults** supplies 10% WACC, 2.5% terminal growth and 12% terminal ROIC without

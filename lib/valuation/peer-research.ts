@@ -10,6 +10,10 @@ export type PublicCompanyProfile = {
   profileUrl: string
   retrievedAt: string
   directoryRetrievedAt?: string
+  provider?: 'SEC' | 'Wikimedia'
+  identityVerification?: string
+  businessDescription?: string
+  businessDescriptionUrl?: string
   informationDate: string
   filing?: {
     form: string
@@ -57,6 +61,10 @@ export function draftPeerRationale(
     parts.push(
       `Industry difference: ${peer.name} is classified as ${peer.industry} (SEC SIC ${peer.sic}), while ${target.name} is classified as ${target.industry} (SEC SIC ${target.sic}). Explain the business overlap before including this peer.`
     )
+  } else if (target.provider === 'Wikimedia' || peer.provider === 'Wikimedia') {
+    parts.push(
+      `Public business screen: compare ${peer.name} with ${target.name} using the descriptions below. Current public background does not by itself establish product or end-market comparability; an SEC industry classification was not retrieved for every issuer.`
+    )
   } else {
     parts.push(
       `SEC issuer identity verified for ${peer.name} and ${target.name}. Industry classification is incomplete; comparability is not established by this lookup.`
@@ -66,6 +74,10 @@ export function draftPeerRationale(
     ['Target', target],
     ['Peer', peer]
   ] as const) {
+    if (profile.businessDescription)
+      parts.push(
+        `${label} current public description (${profile.provider || 'SEC'}, retrieved ${profile.retrievedAt.slice(0, 10)}): “${profile.businessDescription}” Source: ${profile.businessDescriptionUrl}. Wikipedia excerpts are attributed under CC BY-SA; Wikidata structured descriptions are CC0.`
+      )
     if (profile.filing?.businessExcerpt)
       parts.push(
         `${label} business excerpt (${profile.filing.form}, filed ${profile.filing.filed}): “${profile.filing.businessExcerpt}”`
@@ -86,7 +98,7 @@ export function draftPeerRationale(
     'Review product mix, end markets, growth, margins, leverage and accounting adjustments before inclusion.'
   )
   parts.push(
-    `Sources: target SEC profile ${target.profileUrl}; peer SEC profile ${peer.profileUrl}. Profiles retrieved ${peer.retrievedAt.slice(0, 10)} contain current metadata, not a historical profile snapshot.`
+    `Sources: target ${target.provider || 'SEC'} profile ${target.profileUrl}; peer ${peer.provider || 'SEC'} profile ${peer.profileUrl}. Profiles retrieved ${peer.retrievedAt.slice(0, 10)} contain current metadata, not a historical profile snapshot.`
   )
   for (const [label, profile] of [
     ['Target', target],
@@ -100,7 +112,7 @@ export function draftPeerRationale(
       parts.push(`${label} source limits: ${profile.warnings.join(' ')}`)
     if (profile.directoryRetrievedAt)
       parts.push(
-        `${label} ticker lookup used the SEC directory captured ${profile.directoryRetrievedAt.slice(0, 10)}; the returned issuer profile's CIK and ticker were verified at retrieval.`
+        `${label} ticker lookup used the SEC directory captured ${profile.directoryRetrievedAt.slice(0, 10)}. Identity check: ${profile.identityVerification || 'Matching CIK and ticker in the live SEC profile'}.`
       )
   }
   return parts.join('\n\n')
