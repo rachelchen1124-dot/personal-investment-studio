@@ -1,0 +1,998 @@
+import * as React from 'react'
+
+import type { Multiple } from '@/lib/valuation/engine'
+import {
+  fields,
+  type NormalizedManual
+} from '@/lib/valuation/manual-intake.mjs'
+import {
+  executeDcf,
+  executeRelative,
+  type ForecastRow,
+  initialSettings,
+  type IntakeContext,
+  peerPreview,
+  prepareModel,
+  type RunSettings
+} from '@/lib/valuation/workflow'
+import styles from '@/styles/ValuationIntake.module.css'
+
+const format = (value: number | null | undefined, digits = 2) =>
+  value === undefined || value === null
+    ? 'Missing'
+    : value.toLocaleString('en-US', {
+        maximumFractionDigits: digits,
+        minimumFractionDigits: digits
+      })
+const percent = (value: number | null) =>
+  value === null ? '—' : format(value * 100, 1) + '%'
+type DcfRun = ReturnType<typeof executeDcf>
+type RelativeRun = ReturnType<typeof executeRelative>
+type NumericKey =
+  | 'debt'
+  | 'cash'
+  | 'preferred'
+  | 'nci'
+  | 'nonOperating'
+  | 'shares'
+  | 'extraShares'
+  | 'price'
+  | 'baseRevenue'
+  | 'baseWorkingCapital'
+  | 'wacc'
+  | 'terminalGrowth'
+  | 'terminalRoic'
+
+function csvDownload(name: string, rows: (string | number | null)[][]) {
+  const content = rows
+    .map((row) =>
+      row
+        .map((cell) => {
+          const text =
+            typeof cell === 'string' && /^[=+\-@\t\r]/.test(cell)
+              ? "'" + cell
+              : String(cell ?? '')
+          return '"' + text.replaceAll('"', '""') + '"'
+        })
+        .join(',')
+    )
+    .join('\r\n')
+  const url = URL.createObjectURL(
+    new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8' })
+  )
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+export function ValuationModelRunner({
+  records,
+  context,
+  onReview
+}: {
+  records: NormalizedManual[]
+  context: IntakeContext
+  onReview: () => void
+}) {
+  const model = React.useMemo(
+    () => prepareModel(records, context),
+    [records, context]
+  )
+  const [settings, setSettings] = React.useState<RunSettings>(() =>
+    initialSettings(model)
+  )
+  const [dcf, setDcf] = React.useState<{
+    signature: string
+    run: DcfRun
+  } | null>(null)
+  const [relative, setRelative] = React.useState<{
+    signature: string
+    run: RelativeRun
+  } | null>(null)
+  const [error, setError] = React.useState('')
+  const signature = JSON.stringify(settings)
+  const dcfRun = dcf?.signature === signature ? dcf.run : null
+  const rvRun = relative?.signature === signature ? relative.run : null
+  const preview = peerPreview(model, settings.multiple)
+  const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => {
+    setSettings((current) => ({ ...current, [key]: value }))
+    setError('')
+  }
+  const input = (key: NumericKey, label: string, note?: string) => (
+    <label key={key}>
+      {label}
+      <input
+        type='number'
+        step='any'
+        value={settings[key]}
+        onChange={(event) => set(key, event.target.value)}
+      />
+      {note ? <small className={styles.inputHint}>{note}</small> : null}
+    </label>
+  )
+  function run(method: 'dcf' | 'rv') {
+    setError('')
+    try {
+      if (method === 'dcf')
+        setDcf({ signature, run: executeDcf(records, context, settings) })
+      else
+        setRelative({
+          signature,
+          run: executeRelative(records, context, settings)
+        })
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Unable to calculate this model.'
+      )
+    }
+  }
+  function exportResults() {
+    const rows: (string | number | null)[][] = [
+      [
+        'Valuation report',
+        context.company,
+        context.issuerId,
+        context.valuationDate
+      ],
+      [
+        'Currency',
+        settings.currency,
+        'Financial amounts and shares in millions; prices per share'
+      ],
+      ['Analyst assumptions', settings.assumptionsNote],
+      [
+        'Timing',
+        'Five full rolling 12-month periods from valuation date; end-period discounting'
+      ],
+      [
+        'Capital bridge',
+        'Debt',
+        settings.debt,
+        'Cash',
+        settings.cash,
+        'Preferred',
+        settings.preferred,
+        'NCI',
+        settings.nci,
+        'Other assets',
+        settings.nonOperating
+      ],
+      [
+        'Share count',
+        'Base',
+        settings.shares,
+        'Additional dilution',
+        settings.extraShares
+      ]
+    ]
+    if (dcfRun) {
+      rows.push(
+        [
+          'DCF',
+          'Value per share',
+          dcfRun.result.valuePerShare,
+          'Enterprise value',
+          dcfRun.result.enterpriseValue,
+          'Equity value',
+          dcfRun.result.equityValue
+        ],
+        [
+          'DCF base',
+          'LTM / annual end',
+          dcfRun.basePeriod,
+          'Revenue',
+          settings.baseRevenue,
+          'Operating WC',
+          settings.baseWorkingCapital
+        ],
+        [
+          'DCF rates',
+          'WACC %',
+          settings.wacc,
+          'Terminal growth %',
+          settings.terminalGrowth,
+          'Terminal ROIC %',
+          settings.terminalRoic
+        ],
+        [
+          'Forecast assumptions',
+          'Year',
+          'Growth %',
+          'EBIT margin %',
+          'Tax %',
+          'D&A / sales %',
+          'Capex / sales %',
+          'Operating WC / sales %'
+        ],
+        ...settings.forecasts.map((row, index) => [
+          'Forecast assumptions',
+          index + 1,
+          row.growth,
+          row.margin,
+          row.tax,
+          row.da,
+          row.capex,
+          row.wc
+        ]),
+        [
+          'DCF forecast',
+          'Year',
+          'Revenue',
+          'EBIT',
+          'Cash taxes',
+          'D&A',
+          'Capex',
+          'Operating WC',
+          'Change in WC',
+          'FCFF',
+          'PV of FCFF'
+        ],
+        ...dcfRun.result.forecast.map((row) => [
+          'DCF forecast',
+          row.year,
+          row.revenue,
+          row.ebit,
+          row.cashTaxes,
+          row.da,
+          row.capex,
+          row.operatingWorkingCapital,
+          row.changeWorkingCapital,
+          row.fcff,
+          row.pvFcff
+        ]),
+        [
+          'DCF terminal',
+          'Terminal FCFF',
+          dcfRun.result.terminal.fcff,
+          'Terminal reinvestment rate',
+          dcfRun.result.terminal.reinvestmentRate,
+          'PV of terminal value',
+          dcfRun.result.terminal.presentValue
+        ],
+        ['DCF sensitivity', 'WACC', 'Terminal growth', 'Value per share'],
+        ...dcfRun.sensitivity.flatMap((row) =>
+          row.cells.map((cell) => [
+            'DCF sensitivity',
+            row.wacc,
+            cell.growth,
+            cell.valuePerShare ?? cell.error
+          ])
+        )
+      )
+    }
+    if (rvRun) {
+      rows.push(
+        [
+          'Relative valuation',
+          settings.multiple,
+          'LTM end',
+          rvRun.result.period.endDate,
+          'Target metric',
+          rvRun.result.targetMetric
+        ],
+        [
+          'RV range',
+          'Percentile',
+          'Multiple',
+          'Enterprise value',
+          'Equity value',
+          'Value per share',
+          'Upside'
+        ],
+        ...rvRun.result.range.map((row) => [
+          'RV range',
+          row.percentile,
+          row.multiple,
+          row.enterpriseValue,
+          row.equityValue,
+          row.valuePerShare,
+          row.upside
+        ]),
+        [
+          'Included peer',
+          'Identifier',
+          'Rationale',
+          'Numerator',
+          'Denominator',
+          'Multiple'
+        ],
+        ...rvRun.result.included.map((peer) => [
+          'Included peer',
+          peer.issuerId,
+          peer.rationale,
+          peer.numerator,
+          peer.denominator,
+          peer.multiple
+        ]),
+        ...rvRun.result.excluded.map((peer) => [
+          'Excluded peer',
+          peer.ticker,
+          peer.reason
+        ])
+      )
+    }
+    rows.push([
+      'Source audit',
+      'Issuer',
+      'Field',
+      'Original value',
+      'Original unit',
+      'Normalized value',
+      'Currency',
+      'Period',
+      'End date',
+      'Classification',
+      'Source as of',
+      'Source cell',
+      'Definition'
+    ])
+    for (const record of records)
+      rows.push([
+        'Source audit',
+        record.issuerId,
+        record.field,
+        record.source.originalValue,
+        record.source.originalUnit,
+        record.value,
+        record.currency,
+        record.period.basis,
+        record.period.endDate,
+        record.classification,
+        record.source.asOf,
+        record.source.locator,
+        record.definition
+      ])
+    csvDownload(
+      context.issuerId.replaceAll(/[^a-z\d-]/gi, '-') + '-valuation-report.csv',
+      rows
+    )
+  }
+
+  return (
+    <section className={styles.mapping} aria-labelledby='model-title'>
+      <h2 id='model-title'>Build your valuation</h2>
+      <p>
+        Review the imported facts, confirm capital adjustments, then run DCF and
+        relative valuation independently. Financial amounts and share counts
+        below are in millions. Prices are per share.
+      </p>
+      {!records.length ? (
+        <p className={styles.error}>
+          No financial values have been mapped. Return to file review to import
+          a recognized Capital IQ export or map the source values.
+        </p>
+      ) : null}
+      <div className={styles.modelFacts}>
+        {['revenue', 'ebit', 'da', 'capex'].map((field) => (
+          <div key={field}>
+            <small>
+              {fields[field]} ·{' '}
+              {model.annual[field]?.endDate || 'annual base missing'}
+            </small>
+            <strong>{format(model.annual[field]?.value)}</strong>
+            <small>
+              {model.annual[field]?.method ||
+                'Add an annual period or four consecutive quarters'}
+            </small>
+          </div>
+        ))}
+      </div>
+      <p className={styles.notice}>
+        The historical base ends{' '}
+        {model.annual.revenue?.endDate || 'at an unresolved date'}. The DCF
+        carries this run rate to {context.valuationDate} and projects five full
+        rolling years. Review intervening events. Fiscal-year consensus stays a
+        separate reference and is not treated as NTM.
+      </p>
+      <button type='button' onClick={onReview}>
+        Review source cells and units
+      </button>
+      <label className={styles.confirm}>
+        <input
+          type='checkbox'
+          checked={settings.sourceReview}
+          onChange={(event) => set('sourceReview', event.target.checked)}
+        />
+        I confirm the source identities, dates, currencies and unit conversions.
+        This is an operating company suitable for these methods.
+      </label>
+
+      <h3 className={styles.modelHeading}>1. Equity bridge and shares</h3>
+      <p className={styles.caption}>
+        Reported debt, cash and book NCI are proposed where available. Review
+        leases, nonoperating investments, restricted cash and the market value
+        of minority claims. Basic shares and weighted EPS shares are not
+        automatically economic diluted shares.
+      </p>
+      <div className={styles.modelInputs}>
+        <label>
+          Model currency
+          <input
+            maxLength={3}
+            value={settings.currency}
+            onChange={(event) =>
+              set('currency', event.target.value.toUpperCase())
+            }
+          />
+        </label>
+        {input('debt', 'Debt, including applicable leases')}
+        {input('cash', 'Cash included in the equity bridge')}
+        {input('preferred', 'Preferred equity value')}
+        {input(
+          'nci',
+          'Noncontrolling interest value',
+          'Reported book NCI is a starting point; review valuation treatment.'
+        )}
+        {input(
+          'nonOperating',
+          'Other nonoperating assets',
+          'Include assets excluded from operating forecasts; avoid double counting.'
+        )}
+        {input(
+          'shares',
+          'Base shares outstanding',
+          model.capital.pointInTimeDilutedShares
+            ? 'Mapped point-in-time diluted shares.'
+            : 'Basic shares proposed; reconcile share classes and economic dilution.'
+        )}
+        {input(
+          'extraShares',
+          'Additional economic dilution',
+          'Million shares. Enter 0 explicitly if no additional dilution is assumed.'
+        )}
+        {input(
+          'price',
+          'Reference share price (optional)',
+          model.capital.price
+            ? 'Source snapshot: ' + model.capital.price.source.asOf
+            : 'Optional; leave empty to omit upside.'
+        )}
+      </div>
+      <button
+        type='button'
+        className={styles.textButton}
+        onClick={() =>
+          setSettings((current) => ({
+            ...current,
+            preferred: current.preferred || '0',
+            nonOperating: current.nonOperating || '0',
+            extraShares: current.extraShares || '0'
+          }))
+        }
+      >
+        Assume zero for blank preferred equity, other assets and additional
+        dilution
+      </button>
+      <label className={styles.confirm}>
+        <input
+          type='checkbox'
+          checked={settings.capitalReview}
+          onChange={(event) => set('capitalReview', event.target.checked)}
+        />
+        I have reviewed the equity bridge and share count, including each
+        explicit zero assumption.
+      </label>
+      <label className={styles.assumptionNote}>
+        Assumptions and adjustments
+        <textarea
+          rows={3}
+          value={settings.assumptionsNote}
+          onChange={(event) => set('assumptionsNote', event.target.value)}
+          placeholder='Document capital adjustments, dilution, the forecast basis and any use of a book-value proxy.'
+        />
+      </label>
+
+      {context.mode !== 'rv' ? (
+        <>
+          <h3 className={styles.modelHeading}>2. DCF assumptions</h3>
+          <div className={styles.modelInputs}>
+            {input('baseRevenue', 'Annual / LTM revenue base')}
+            {input(
+              'baseWorkingCapital',
+              'Base operating working capital',
+              model.workingCapital
+                ? 'Mapped operating WC.'
+                : model.tradeWorkingCapital
+                  ? 'Narrow trade proxy = receivables + inventory − payables. Review other operating balances before using.'
+                  : 'Enter a reconciled balance; missing components are not zero.'
+            )}
+            {input('wacc', 'WACC (%)')}
+            {input('terminalGrowth', 'Terminal growth (%)')}
+            {input('terminalRoic', 'Terminal ROIC (%)')}
+          </div>
+          <p className={styles.caption}>
+            Forecast ratios are proposed from aligned historical periods where
+            available. Growth, cash taxes and discount rates need an analyst
+            assumption. The terminal model requires reinvestment of growth /
+            ROIC.
+          </p>
+          <button
+            type='button'
+            onClick={() =>
+              setSettings((current) => ({
+                ...current,
+                wacc: '10',
+                terminalGrowth: '2.5',
+                terminalRoic: '12',
+                forecasts: current.forecasts.map((row) => ({
+                  ...row,
+                  growth: '5',
+                  tax: '25'
+                }))
+              }))
+            }
+          >
+            Fill illustrative rates: 5% growth, 25% tax, 10% WACC, 2.5% terminal
+            growth, 12% ROIC
+          </button>
+          <p className={styles.caption}>
+            These illustrative rates are scenario assumptions, not sourced
+            forecasts or a company-specific WACC estimate.
+          </p>
+          <div className={styles.tableWrap}>
+            <table className={styles.reviewTable}>
+              <caption>
+                Five rolling 12-month forecast periods from{' '}
+                {context.valuationDate}. All entries are percentages.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope='col'>Year</th>
+                  {[
+                    'Revenue growth',
+                    'EBIT margin',
+                    'Cash tax',
+                    'D&A / revenue',
+                    'Capex / revenue',
+                    'Operating WC / revenue'
+                  ].map((label) => (
+                    <th key={label} scope='col'>
+                      {label} %
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {settings.forecasts.map((row, index) => (
+                  <tr key={index}>
+                    <th scope='row'>{index + 1}</th>
+                    {(Object.keys(row) as (keyof ForecastRow)[]).map(
+                      (field) => (
+                        <td key={field}>
+                          <input
+                            type='number'
+                            step='any'
+                            aria-label={`Year ${index + 1} ${field} percent`}
+                            value={row[field]}
+                            onChange={(event) =>
+                              set(
+                                'forecasts',
+                                settings.forecasts.map((item, i) =>
+                                  i === index
+                                    ? { ...item, [field]: event.target.value }
+                                    : item
+                                )
+                              )
+                            }
+                          />
+                        </td>
+                      )
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <label className={styles.confirm}>
+            <input
+              type='checkbox'
+              checked={settings.dcfReview}
+              onChange={(event) => set('dcfReview', event.target.checked)}
+            />
+            I accept the historical carry-forward, working-capital definition
+            and forecast assumptions shown above.
+          </label>
+          <div className={styles.bottomActions}>
+            <button
+              type='button'
+              className={styles.primary}
+              disabled={!records.length}
+              onClick={() => run('dcf')}
+            >
+              Calculate DCF
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {context.mode !== 'dcf' ? (
+        <>
+          <h3 className={styles.modelHeading}>3. Relative valuation</h3>
+          <p>
+            Choose at least three comparable issuers and document why they
+            belong in the peer set. The target is excluded automatically.
+            Different financial period ends and nonpositive denominators are
+            flagged.
+          </p>
+          <label>
+            Valuation multiple
+            <select
+              value={settings.multiple}
+              onChange={(event) =>
+                set('multiple', event.target.value as Multiple)
+              }
+            >
+              {(['EV/Revenue', 'EV/EBITDA', 'EV/EBIT', 'P/E'] as const).map(
+                (multiple) => (
+                  <option key={multiple}>{multiple}</option>
+                )
+              )}
+            </select>
+          </label>
+          <p className={styles.caption}>
+            Target {preview.field}: {format(preview.target?.value)} · LTM ended{' '}
+            {preview.target?.period.endDate || 'missing'}. Native SP_NET_INC
+            needs explicit common-equity attribution before P/E can run.
+          </p>
+          {preview.target &&
+          model.annual[preview.field] &&
+          Math.abs(preview.target.value! - model.annual[preview.field]!.value) >
+            0.000_001 ? (
+            <p className={styles.notice}>
+              The peer screen target metric is {format(preview.target.value)};
+              the historical statement base is{' '}
+              {format(model.annual[preview.field]!.value)}. Review differences
+              in definitions, revisions and period coverage. RV uses the target
+              row from the same screen as the peers.
+            </p>
+          ) : null}
+          <label className={styles.confirm}>
+            <input
+              type='checkbox'
+              checked={settings.peerProfileReview}
+              onChange={(event) =>
+                set('peerProfileReview', event.target.checked)
+              }
+            />
+            I confirm the peer export currency and snapshot date. For this
+            Capital IQ screen profile, IQ market values are in millions, SP
+            statement amounts in thousands and shares in individual units;
+            prices remain per share. I have reviewed saved formula results and
+            accounting definitions.
+          </label>
+          <div className={styles.tableWrap}>
+            <table className={styles.reviewTable}>
+              <thead>
+                <tr>
+                  <th scope='col'>Include / issuer</th>
+                  <th scope='col'>Numerator / metric</th>
+                  <th scope='col'>Period / checks</th>
+                  <th scope='col'>Comparability rationale</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.peers.map((peer) => (
+                  <tr key={peer.issuerId}>
+                    <td>
+                      <label className={styles.peerChoice}>
+                        <input
+                          type='checkbox'
+                          checked={Boolean(
+                            settings.peerSelections[peer.issuerId]?.included
+                          )}
+                          disabled={Boolean(peer.reason)}
+                          onChange={(event) =>
+                            set('peerSelections', {
+                              ...settings.peerSelections,
+                              [peer.issuerId]: {
+                                rationale:
+                                  settings.peerSelections[peer.issuerId]
+                                    ?.rationale || '',
+                                included: event.target.checked
+                              }
+                            })
+                          }
+                        />
+                        {peer.issuerId}
+                      </label>
+                    </td>
+                    <td>
+                      {format(peer.numerator?.value)} /{' '}
+                      {format(peer.metric?.value)}
+                      <small>
+                        {!peer.reason && peer.metric?.value
+                          ? format(peer.numerator!.value! / peer.metric.value) +
+                            '×'
+                          : '—'}
+                      </small>
+                    </td>
+                    <td>
+                      {peer.metric?.period.endDate || 'Missing'}
+                      <small>
+                        {peer.reason ||
+                          'Period aligned; review business comparability'}
+                      </small>
+                    </td>
+                    <td>
+                      <textarea
+                        aria-label={'Rationale for ' + peer.issuerId}
+                        rows={2}
+                        value={
+                          settings.peerSelections[peer.issuerId]?.rationale ||
+                          ''
+                        }
+                        disabled={Boolean(peer.reason)}
+                        onChange={(event) =>
+                          set('peerSelections', {
+                            ...settings.peerSelections,
+                            [peer.issuerId]: {
+                              included:
+                                settings.peerSelections[peer.issuerId]
+                                  ?.included || false,
+                              rationale: event.target.value
+                            }
+                          })
+                        }
+                        placeholder='Products, end markets, margins, growth and accounting adjustments'
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!preview.peers.length ? (
+            <p className={styles.notice}>
+              Add a peer screen with identifiers, a target row, dated market
+              values and LTM financial metrics.
+            </p>
+          ) : null}
+          <div className={styles.bottomActions}>
+            <button
+              type='button'
+              className={styles.primary}
+              disabled={!records.length}
+              onClick={() => run('rv')}
+            >
+              Calculate relative valuation
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {error ? (
+        <p className={styles.error} role='alert'>
+          {error}
+        </p>
+      ) : null}
+      {(dcf || relative) && !dcfRun && !rvRun ? (
+        <p className={styles.notice} role='status'>
+          Inputs have changed. Recalculate to see results for the current
+          assumptions.
+        </p>
+      ) : null}
+      {dcfRun || rvRun ? (
+        <div
+          className={styles.results}
+          aria-label='Valuation results'
+          aria-live='polite'
+        >
+          <h3>Valuation results · {context.issuerId}</h3>
+          <p>
+            Scenario outputs from the uploaded data and your confirmed
+            assumptions. Currency: {settings.currency}. Financial amounts and
+            shares are in millions.
+          </p>
+          {dcfRun ? (
+            <>
+              <h4>DCF</h4>
+              <div className={styles.modelFacts}>
+                <div>
+                  <small>Value per share</small>
+                  <strong>
+                    {settings.currency} {format(dcfRun.result.valuePerShare)}
+                  </strong>
+                </div>
+                <div>
+                  <small>Enterprise value</small>
+                  <strong>{format(dcfRun.result.enterpriseValue)}</strong>
+                </div>
+                <div>
+                  <small>Equity value</small>
+                  <strong>{format(dcfRun.result.equityValue)}</strong>
+                </div>
+                <div>
+                  <small>Upside to reference price</small>
+                  <strong>{percent(dcfRun.result.upside)}</strong>
+                </div>
+              </div>
+              <p>
+                PV of forecast cash flows:{' '}
+                {format(dcfRun.result.pvForecastFcff)}. PV of terminal value:{' '}
+                {format(dcfRun.result.terminal.presentValue)}. Terminal share of
+                EV: {percent(dcfRun.result.terminalValueShare)}.
+              </p>
+              <div className={styles.tableWrap}>
+                <table className={styles.reviewTable}>
+                  <caption>
+                    DCF forecast · full rolling years with end-period
+                    discounting
+                  </caption>
+                  <thead>
+                    <tr>
+                      {[
+                        'Year',
+                        'Revenue',
+                        'EBIT',
+                        'NOPAT',
+                        'D&A',
+                        'Capex',
+                        'Δ operating WC',
+                        'FCFF',
+                        'PV FCFF'
+                      ].map((label) => (
+                        <th key={label} scope='col'>
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dcfRun.result.forecast.map((row) => (
+                      <tr key={row.year}>
+                        {[
+                          row.year,
+                          row.revenue,
+                          row.ebit,
+                          row.nopat,
+                          row.da,
+                          row.capex,
+                          row.changeWorkingCapital,
+                          row.fcff,
+                          row.pvFcff
+                        ].map((value, index) => (
+                          <td key={index}>
+                            {format(value, index === 0 ? 0 : 2)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className={styles.tableWrap}>
+                <table className={styles.reviewTable}>
+                  <caption>
+                    Value per share sensitivity · WACC × terminal growth
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope='col'>WACC / growth</th>
+                      {dcfRun.sensitivity[0]!.cells.map((cell) => (
+                        <th key={cell.growth} scope='col'>
+                          {percent(cell.growth)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dcfRun.sensitivity.map((row) => (
+                      <tr key={row.wacc}>
+                        <th scope='row'>{percent(row.wacc)}</th>
+                        {row.cells.map((cell) => (
+                          <td key={cell.growth} title={cell.error || ''}>
+                            {cell.error
+                              ? 'Invalid assumptions'
+                              : format(cell.valuePerShare)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+          {rvRun ? (
+            <>
+              <h4>Relative valuation · {rvRun.result.multiple}</h4>
+              <div className={styles.modelFacts}>
+                {rvRun.result.range.map((row) => (
+                  <div key={row.percentile}>
+                    <small>
+                      {row.percentile}th percentile · {format(row.multiple)}×
+                    </small>
+                    <strong>
+                      {settings.currency} {format(row.valuePerShare)}
+                    </strong>
+                    <small>{percent(row.upside)} to reference price</small>
+                  </div>
+                ))}
+              </div>
+              <p>
+                {rvRun.result.included.length} independent peers included.
+                Target metric {format(rvRun.result.targetMetric)}, LTM ended{' '}
+                {rvRun.result.period.endDate}. Percentiles describe this
+                selected peer set.
+              </p>
+              {rvRun.result.excluded.length ? (
+                <ul>
+                  {rvRun.result.excluded.map((peer) => (
+                    <li key={peer.ticker}>
+                      {peer.ticker}: {peer.reason}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : null}
+          <p className={styles.caption}>
+            Equity bridge: enterprise value + cash{' '}
+            {format(Number(settings.cash))} + other assets{' '}
+            {format(Number(settings.nonOperating))} − debt{' '}
+            {format(Number(settings.debt))} − preferred{' '}
+            {format(Number(settings.preferred))} − NCI{' '}
+            {format(Number(settings.nci))}. Divide by{' '}
+            {format(Number(settings.shares) + Number(settings.extraShares), 6)}{' '}
+            million economic shares. P/E produces common equity value directly.
+          </p>
+          <button
+            type='button'
+            className={styles.primary}
+            onClick={exportResults}
+          >
+            Download valuation report (Excel CSV)
+          </button>
+          <details>
+            <summary>Model diagnostics and limitations</summary>
+            <ul>
+              {[
+                ...new Set([
+                  ...(dcfRun?.result.warnings || []),
+                  ...(rvRun?.result.warnings || [])
+                ])
+              ].map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </details>
+        </div>
+      ) : null}
+
+      {model.consensus.length ? (
+        <details className={styles.consensus}>
+          <summary>
+            Annual consensus reference · kept separate from the DCF forecast
+          </summary>
+          <div className={styles.tableWrap}>
+            <table className={styles.reviewTable}>
+              <thead>
+                <tr>
+                  <th scope='col'>Field</th>
+                  <th scope='col'>Fiscal year end</th>
+                  <th scope='col'>Value / currency</th>
+                  <th scope='col'>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {model.consensus.map((record) => (
+                  <tr key={record.source.id}>
+                    <td>{fields[record.field]}</td>
+                    <td>{record.period.endDate}</td>
+                    <td>
+                      {format(record.value)}{' '}
+                      {record.currency || 'currency needed'}
+                    </td>
+                    <td>{record.source.locator}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      ) : null}
+    </section>
+  )
+}

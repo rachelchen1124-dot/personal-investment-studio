@@ -105,6 +105,24 @@
 .dialog p { font-size: 12px; color: #617763; overflow-wrap: anywhere; }
 .dialog .actions { justify-content: flex-end; margin-top: 18px; }
 .editorGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px; }
+.modelFacts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 20px 0; }
+.modelFacts > div { background: #eef5f0; border: 1px solid #d9e7df; border-radius: 9px; padding: 16px; }
+.modelFacts strong, .modelFacts small { display: block; }
+.modelFacts strong { font-size: 25px; letter-spacing: -.6px; margin: 8px 0; }
+.modelFacts small { font-size: 11px; color: #5e776b; line-height: 1.6; }
+.modelHeading { margin: 32px 0 12px; padding-top: 22px; border-top: 1px solid #dce6df; font-size: 19px; }
+.modelInputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 17px; margin: 18px 0; }
+.inputHint { display: block; color: #6b8074; font-weight: 400; line-height: 1.6; margin-top: 5px; }
+.assumptionNote { margin-top: 20px; }
+.peerChoice { display: flex !important; align-items: center; gap: 9px; }
+.peerChoice input { accent-color: #216c59; width: 18px; height: 18px; }
+.results { margin-top: 28px; border-top: 3px solid #216c59; padding-top: 12px; }
+.results p { line-height: 1.7; font-size: 13px; }
+.results h3 { font-size: 24px; }
+.results details, .consensus { margin-top: 24px; font-size: 12px; line-height: 1.8; }
+.results summary, .consensus summary { cursor: pointer; font-weight: 650; }
+.restore { margin: 16px 0; padding: 15px 18px; border: 1px solid #dce6df; border-radius: 9px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: #fff; }
+.restore p { margin: 0; color: #61766b; font-size: 12px; }
 @media (max-width: 900px) {
   .context { grid-template-columns: 1fr 1fr; }
   .metadata { grid-template-columns: 1fr 1fr; }
