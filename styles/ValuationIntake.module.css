@@ -119,6 +119,8 @@
 .results { margin-top: 28px; border-top: 3px solid #216c59; padding-top: 12px; }
 .results p { line-height: 1.7; font-size: 13px; }
 .results h3 { font-size: 24px; }
+.modelResult { scroll-margin-top: 24px; }
+.modelResult:focus-visible { outline: 2px solid #4b9f88; outline-offset: 6px; }
 .results details, .consensus { margin-top: 24px; font-size: 12px; line-height: 1.8; }
 .results summary, .consensus summary { cursor: pointer; font-weight: 650; }
 .restore { margin: 16px 0; padding: 15px 18px; border: 1px solid #dce6df; border-radius: 9px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; background: #fff; }

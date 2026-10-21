@@ -28,6 +28,13 @@ const percent = (value: number | null) =>
   value === null ? '—' : format(value * 100, 1) + '%'
 type DcfRun = ReturnType<typeof executeDcf>
 type RelativeRun = ReturnType<typeof executeRelative>
+type Method = 'dcf' | 'rv'
+type CalculationFeedback = {
+  method: Method
+  status: 'error' | 'complete'
+  message: string
+  signature: string
+}
 type NumericKey =
   | 'debt'
   | 'cash'
@@ -91,14 +98,31 @@ export function ValuationModelRunner({
     signature: string
     run: RelativeRun
   } | null>(null)
-  const [error, setError] = React.useState('')
+  const [feedback, setFeedback] = React.useState<CalculationFeedback | null>(
+    null
+  )
+  const feedbackRef = React.useRef<HTMLParagraphElement>(null)
+  const dcfResultsRef = React.useRef<HTMLElement>(null)
+  const rvResultsRef = React.useRef<HTMLElement>(null)
   const signature = JSON.stringify(settings)
+  const currentFeedback = feedback?.signature === signature ? feedback : null
   const dcfRun = dcf?.signature === signature ? dcf.run : null
   const rvRun = relative?.signature === signature ? relative.run : null
   const preview = peerPreview(model, settings.multiple)
+  React.useEffect(() => {
+    if (!currentFeedback) return
+    const target =
+      currentFeedback.status === 'error'
+        ? feedbackRef.current
+        : currentFeedback.method === 'dcf'
+          ? dcfResultsRef.current
+          : rvResultsRef.current
+    target?.focus({ preventScroll: true })
+    target?.scrollIntoView({ block: 'start', behavior: 'auto' })
+  }, [currentFeedback])
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => {
     setSettings((current) => ({ ...current, [key]: value }))
-    setError('')
+    setFeedback(null)
   }
   const input = (key: NumericKey, label: string, note?: string) => (
     <label key={key}>
@@ -106,14 +130,14 @@ export function ValuationModelRunner({
       <input
         type='number'
         step='any'
+        required={key !== 'price'}
         value={settings[key]}
         onChange={(event) => set(key, event.target.value)}
       />
       {note ? <small className={styles.inputHint}>{note}</small> : null}
     </label>
   )
-  function run(method: 'dcf' | 'rv') {
-    setError('')
+  function run(method: Method) {
     try {
       if (method === 'dcf')
         setDcf({ signature, run: executeDcf(records, context, settings) })
@@ -122,10 +146,22 @@ export function ValuationModelRunner({
           signature,
           run: executeRelative(records, context, settings)
         })
+      setFeedback({
+        method,
+        status: 'complete',
+        signature,
+        message: `${method === 'dcf' ? 'DCF' : 'Relative valuation'} calculated. Results are shown below.`
+      })
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Unable to calculate this model.'
-      )
+      if (method === 'dcf') setDcf(null)
+      else setRelative(null)
+      setFeedback({
+        method,
+        status: 'error',
+        signature,
+        message:
+          err instanceof Error ? err.message : 'Unable to calculate this model.'
+      })
     }
   }
   function exportResults() {
@@ -141,7 +177,11 @@ export function ValuationModelRunner({
         settings.currency,
         'Financial amounts and shares in millions; prices per share'
       ],
-      ['Analyst assumptions', settings.assumptionsNote],
+      [
+        'Additional analyst note (optional)',
+        settings.assumptionsNote ||
+          'No additional note supplied; model assumptions are listed below.'
+      ],
       [
         'Timing',
         'Five full rolling 12-month periods from valuation date; end-period discounting'
@@ -475,7 +515,7 @@ export function ValuationModelRunner({
         explicit zero assumption.
       </label>
       <label className={styles.assumptionNote}>
-        Assumptions and adjustments
+        Assumptions and adjustments (optional)
         <textarea
           rows={3}
           value={settings.assumptionsNote}
@@ -483,6 +523,11 @@ export function ValuationModelRunner({
           placeholder='Document capital adjustments, dilution, the forecast basis and any use of a book-value proxy.'
         />
       </label>
+      <p className={styles.caption}>
+        Your numeric assumptions and review confirmations are recorded
+        automatically. Use this optional note to explain any additional
+        adjustments.
+      </p>
 
       {context.mode !== 'rv' ? (
         <>
@@ -599,11 +644,34 @@ export function ValuationModelRunner({
               type='button'
               className={styles.primary}
               disabled={!records.length}
+              aria-describedby={
+                currentFeedback?.method === 'dcf'
+                  ? 'dcf-calculation-feedback'
+                  : undefined
+              }
               onClick={() => run('dcf')}
             >
               Calculate DCF
             </button>
           </div>
+          {currentFeedback?.method === 'dcf' ? (
+            <p
+              ref={feedbackRef}
+              id='dcf-calculation-feedback'
+              className={
+                currentFeedback.status === 'error'
+                  ? styles.error
+                  : styles.status
+              }
+              role={currentFeedback.status === 'error' ? 'alert' : 'status'}
+              tabIndex={-1}
+            >
+              {currentFeedback.status === 'error' ? (
+                <strong>DCF needs attention: </strong>
+              ) : null}
+              {currentFeedback.message}
+            </p>
+          ) : null}
         </>
       ) : null}
 
@@ -669,7 +737,9 @@ export function ValuationModelRunner({
                   <th scope='col'>Include / issuer</th>
                   <th scope='col'>Numerator / metric</th>
                   <th scope='col'>Period / checks</th>
-                  <th scope='col'>Comparability rationale</th>
+                  <th scope='col'>
+                    Comparability rationale (required for selected peers)
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -724,6 +794,9 @@ export function ValuationModelRunner({
                           ''
                         }
                         disabled={Boolean(peer.reason)}
+                        required={Boolean(
+                          settings.peerSelections[peer.issuerId]?.included
+                        )}
                         onChange={(event) =>
                           set('peerSelections', {
                             ...settings.peerSelections,
@@ -754,19 +827,37 @@ export function ValuationModelRunner({
               type='button'
               className={styles.primary}
               disabled={!records.length}
+              aria-describedby={
+                currentFeedback?.method === 'rv'
+                  ? 'rv-calculation-feedback'
+                  : undefined
+              }
               onClick={() => run('rv')}
             >
               Calculate relative valuation
             </button>
           </div>
+          {currentFeedback?.method === 'rv' ? (
+            <p
+              ref={feedbackRef}
+              id='rv-calculation-feedback'
+              className={
+                currentFeedback.status === 'error'
+                  ? styles.error
+                  : styles.status
+              }
+              role={currentFeedback.status === 'error' ? 'alert' : 'status'}
+              tabIndex={-1}
+            >
+              {currentFeedback.status === 'error' ? (
+                <strong>Relative valuation needs attention: </strong>
+              ) : null}
+              {currentFeedback.message}
+            </p>
+          ) : null}
         </>
       ) : null}
 
-      {error ? (
-        <p className={styles.error} role='alert'>
-          {error}
-        </p>
-      ) : null}
       {(dcf || relative) && !dcfRun && !rvRun ? (
         <p className={styles.notice} role='status'>
           Inputs have changed. Recalculate to see results for the current
@@ -776,6 +867,7 @@ export function ValuationModelRunner({
       {dcfRun || rvRun ? (
         <div
           className={styles.results}
+          role='region'
           aria-label='Valuation results'
           aria-live='polite'
         >
@@ -786,8 +878,13 @@ export function ValuationModelRunner({
             shares are in millions.
           </p>
           {dcfRun ? (
-            <>
-              <h4>DCF</h4>
+            <section
+              ref={dcfResultsRef}
+              tabIndex={-1}
+              className={styles.modelResult}
+              aria-labelledby='dcf-result-title'
+            >
+              <h4 id='dcf-result-title'>DCF results</h4>
               <div className={styles.modelFacts}>
                 <div>
                   <small>Value per share</small>
@@ -893,11 +990,18 @@ export function ValuationModelRunner({
                   </tbody>
                 </table>
               </div>
-            </>
+            </section>
           ) : null}
           {rvRun ? (
-            <>
-              <h4>Relative valuation · {rvRun.result.multiple}</h4>
+            <section
+              ref={rvResultsRef}
+              tabIndex={-1}
+              className={styles.modelResult}
+              aria-labelledby='rv-result-title'
+            >
+              <h4 id='rv-result-title'>
+                Relative valuation results · {rvRun.result.multiple}
+              </h4>
               <div className={styles.modelFacts}>
                 {rvRun.result.range.map((row) => (
                   <div key={row.percentile}>
@@ -926,7 +1030,7 @@ export function ValuationModelRunner({
                   ))}
                 </ul>
               ) : null}
-            </>
+            </section>
           ) : null}
           <p className={styles.caption}>
             Equity bridge: enterprise value + cash{' '}
