@@ -11,7 +11,7 @@ export default function ValuationAnalystPage() {
         <title>Valuation Analyst | Rachel&apos;s Investment Studio</title>
         <meta
           name='description'
-          content='Prepare DCF and relative valuation inputs with guided uploads for historical financials, capital structure, peer data and optional forward estimates.'
+          content='Import valuation data, review assumptions and calculate DCF and relative valuation independently with source references and downloadable reports.'
         />
       </Head>
       <header className={styles.header}>
@@ -27,15 +27,18 @@ export default function ValuationAnalystPage() {
       </header>
       <main className={styles.main}>
         <p className={styles.breadcrumb}>
-          <Link href='/tools'>Tools</Link> / Fundamental Research / Valuation Analyst
+          <Link href='/tools'>Tools</Link> / Fundamental Research / Valuation
+          Analyst
         </p>
         <section className={styles.hero}>
-          <div className={styles.eyebrow}>VALUATION ANALYST · DATA INTAKE</div>
-          <h1>Bring your valuation data.</h1>
+          <div className={styles.eyebrow}>VALUATION ANALYST</div>
+          <h1>From your data to a valuation.</h1>
           <p>
             Feed your Bloomberg, Capital IQ or FactSet exports into four clear
-            upload areas. Prepare inputs for DCF and relative valuation
-            independently, with source references and missing data kept visible.
+            upload areas. Native Capital IQ layouts are mapped automatically;
+            other layouts use the guided templates. Review assumptions,
+            calculate DCF and relative valuation independently, and download the
+            results.
           </p>
         </section>
         <ValuationDataIntake />

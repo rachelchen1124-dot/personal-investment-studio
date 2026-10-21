@@ -28,7 +28,7 @@ CSV/paste alternative. XLSX decompression needs browser support for deflate-raw.
 
 Users can select worksheets and source cells for explicit mappings. The supplied
 long-format template's canonical Field/Value columns can be proposed
-automatically; arbitrary terminal layouts are not silently guessed. Sheet
+automatically. Native Capital IQ standardized statements, consensus Actuals/Estimates rows and SP/IQ peer screens are also recognized. Other layouts require the templates or explicit mapping. Sheet
 pagination retains absolute cell addresses. Re-importing template mappings does
 not overwrite an existing mapping on a source cell.
 
@@ -44,16 +44,63 @@ checks. Amounts and shares normalize to millions; prices remain per share. No FX
 conversion is inferred. Conflicting values/definitions are retained and flagged.
 Drafts can be exported without inventing missing values.
 
-## Current boundary
+## Calculate and download
 
-Files and mappings are held in browser memory. Download the pack to preserve
-them; they are not sent to a server, persisted in a public repository or submitted
-to an AI service. The data pack can be attached to an analyst conversation.
+Reopen an existing `valuation-manual-intake-v1` JSON to recover its raw workbooks.
+The importer rebuilds native proposals and preserves validated manual cell mappings;
+previous derived records and readiness flags are not trusted. All restored sources
+need review again. JSON is an intake backup, not the primary results output.
 
-The workspace prepares inputs. It does not run an autonomous analyst or produce
-a completed valuation/workbook. DCF forecasts, WACC/terminal assumptions and RV
-peer comparability remain separate workflow steps. Upload-category completeness
-is not model readiness; readyForModelExecution is always false at this stage.
+Choose **Build valuation** after source review. The screen shows historical annual
+or LTM totals, the proposed capital bridge, source dates and editable assumptions.
+Four consecutive quarters may form LTM; a quarter is never multiplied by four.
+Consensus actuals are separate from statement actuals, and fiscal consensus is not
+relabeled NTM. Statements may use thousands while consensus uses millions; actual
+share counts retain a separate scale. Missing peer/consensus currency must be
+confirmed explicitly, with no automatic FX conversion.
 
-Automated checks are in research/valuation_analyst/manual-intake.test.mjs.
-The dedicated Valuation checks workflow uses the repository's required Node 24.
+DCF and relative valuation invoke the deterministic engines independently:
+
+- DCF: five rolling full annual periods from the valuation date, with end-period
+  discounting, FCFF forecast, explicit growth/ROIC terminal reinvestment, equity
+  bridge, per-share value and WACC/growth sensitivity. Historical ratios are
+  proposed only from aligned periods. Carrying the historical run rate forward,
+  a narrow trade-working-capital proxy, discount rates, taxes and all bridge
+  adjustments require explicit user review. Blank values never become zero.
+- Relative valuation: EV/revenue, EV/EBITDA, EV/EBIT, or P/E with reconciled common
+  net income. Review at least three independent peers with documented rationales,
+  aligned periods, definitions and market snapshots. The target and provider
+  summary rows are excluded. SP_NET_INC is not assumed to be common net income.
+  Price times shares is checked against market capitalization when provided.
+
+Native SP/IQ screens propose IQ market values in millions, SP financial values in
+thousands and individual shares. The user must confirm this mixed-unit profile,
+currency and saved formula results. Pending/error cells remain unavailable;
+metadata errors do not discard otherwise readable company rows.
+
+The optional illustrative-rates button sets 5% revenue growth, 25% cash tax,
+10% WACC, 2.5% terminal growth and 12% terminal ROIC. These are visibly labeled
+scenario assumptions, not retrieved market data or company-specific forecasts.
+The page requires explicit assumption and source confirmations before calculating.
+Changes invalidate displayed results until recalculation.
+
+The **Download valuation report (Excel CSV)** action exports human-readable model
+inputs, forecasts, sensitivity, peer ranges, selections and source-cell audit
+trails. It contains calculated values, not an editable formula-linked XLSX model.
+
+## Persistence and scope
+
+Files, assumptions and calculations stay in browser memory and are not sent to a
+server or AI service. Download an intake JSON backup to preserve raw source tables
+and cell mappings; download the CSV report to preserve valuation assumptions and
+results. Closing/reloading the tab discards the active unsaved session.
+
+This is a guided deterministic valuation workflow, not an autonomous research
+agent. Banks, insurers, REITs, fiscal stub periods, detailed NOL schedules and
+security-specific option modelling require separate methods. A formula-linked
+Excel workbook and autonomous analyst orchestration remain future work.
+
+Automated checks cover manual intake and native layouts/workflow in
+`manual-intake.test.mjs` and `capital-iq.test.mjs`. Fixtures use synthetic numbers;
+customer workbooks are not committed. The dedicated Valuation checks workflow
+uses the repository's required Node 24.
