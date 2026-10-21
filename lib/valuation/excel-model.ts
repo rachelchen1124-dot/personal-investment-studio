@@ -1002,7 +1002,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         for (const profile of [research.target, research.peer]) {
           if (!profile) continue
           for (const line of noteLines(
-            `${profile.name} · profile retrieved ${profile.retrievedAt}. Current SEC metadata: ${profile.profileUrl}`
+            `${profile.name} · profile retrieved ${profile.retrievedAt}. Current ${profile.provider || 'SEC'} metadata: ${profile.profileUrl}`
           ))
             w.put('C' + rationaleRow++, line, 'note')
           if (profile.filing)

@@ -2,6 +2,7 @@ import { validDate } from './manual-intake.mjs'
 import { type PublicCompanyProfile } from './peer-research.ts'
 import { defaultSecUserAgent } from './sec.ts'
 import bundledDirectory from './sec-ticker-directory.json' with { type: 'json' }
+import { fetchWikimediaPeerProfile } from './wiki-peer-research.ts'
 
 type TickerEntry = {
   cik: string
@@ -260,7 +261,7 @@ export async function fetchPublicPeerProfile(
           'User-Agent': defaultSecUserAgent,
           Accept: 'application/json,text/html'
         },
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(10_000),
         redirect: 'error'
       })
       if (!response.ok)
@@ -301,12 +302,15 @@ export async function fetchPublicPeerProfile(
         !Array.isArray(saved.data)
       )
         throw err
-      const entries = parseSecTickers({
-        fields: ['cik', 'name', 'ticker', 'exchange'],
-        data: saved.data.map((row: unknown) =>
-          Array.isArray(row) ? [row[0], row[1], row[1], row[2]] : []
-        )
-      })
+      const entries =
+        Array.isArray(saved.fields) && saved.fields.includes('name')
+          ? parseSecTickers(saved)
+          : parseSecTickers({
+              fields: ['cik', 'name', 'ticker', 'exchange'],
+              data: saved.data.map((row: unknown) =>
+                Array.isArray(row) ? [row[0], row[1], row[1], row[2]] : []
+              )
+            })
       if (!entries.length) throw err
       return { entries, capturedAt: saved.retrievedAt }
     }
@@ -331,7 +335,21 @@ export async function fetchPublicPeerProfile(
   }
   const resolved = resolveSecIssuer(issuerId, directory.entries)
   const profileUrl = `https://data.sec.gov/submissions/CIK${resolved.cik}.json`
-  const data: unknown = JSON.parse(await request(profileUrl))
+  let profileText: string
+  try {
+    profileText = await request(profileUrl)
+  } catch {
+    const profile = await fetchWikimediaPeerProfile(resolved, issuerId, asOf, {
+      fetcher,
+      directoryRetrievedAt: directory.capturedAt || new Date().toISOString()
+    })
+    if (!options.skipCache) {
+      if (cache.size >= 200) cache.delete(cache.keys().next().value!)
+      cache.set(key, { profile, expires: Date.now() + 60 * 60 * 1000 })
+    }
+    return profile
+  }
+  const data: unknown = JSON.parse(profileText)
   if (
     !jsonObject(data) ||
     String(data.cik).padStart(10, '0') !== resolved.cik ||

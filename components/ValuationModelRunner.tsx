@@ -162,7 +162,7 @@ export function ValuationModelRunner({
     researchController.current = controller
     setResearchBusy(true)
     setResearchMessage(
-      'Fetching SEC issuer profiles and annual-report references…'
+      'Fetching public company background and filing references…'
     )
     setResearchErrors((current) =>
       Object.fromEntries(
@@ -916,12 +916,14 @@ export function ValuationModelRunner({
             </button>
           </div>
           <p className={styles.caption}>
-            Fetch SEC issuer profiles and annual-report references, then fill
-            blank rationales with a cited draft. Existing text is preserved.
-            Only issuer identifiers and the valuation date are sent for lookup;
-            uploaded files stay in your browser. SEC coverage is limited to
-            supported US listings. Current profile metadata is labeled
-            separately from filings available by your valuation date.
+            Fetch public company background and available SEC annual-report
+            references, then fill blank rationales with a cited draft. SEC is
+            preferred; if unavailable, a verified Wikidata / Wikipedia profile
+            is used and labeled. Existing text is preserved. Only issuer
+            identifiers and the valuation date are sent for lookup; uploaded
+            files stay in your browser. SEC coverage is limited to supported US
+            listings. Current profile metadata is labeled separately from
+            filings available by your valuation date.
           </p>
           {researchMessage ? (
             <p className={styles.status} role='status'>
@@ -1051,9 +1053,9 @@ export function ValuationModelRunner({
                               <p>
                                 Profiles retrieved{' '}
                                 {research.peer.retrievedAt.slice(0, 10)} contain
-                                current metadata. Annual reports below were
-                                filed on or before {context.valuationDate}. A
-                                business address does not establish revenue
+                                current metadata. Any SEC annual reports shown
+                                were filed on or before {context.valuationDate}.
+                                A business address does not establish revenue
                                 geography.
                               </p>
                               {[
@@ -1071,8 +1073,11 @@ export function ValuationModelRunner({
                                       CIK {profile.cik}
                                     </p>
                                     <p>
-                                      SEC SIC {profile.sic || 'unavailable'} ·{' '}
-                                      {profile.industry}.{' '}
+                                      {profile.provider === 'Wikimedia'
+                                        ? 'Public description'
+                                        : 'SEC SIC ' +
+                                          (profile.sic || 'unavailable')}{' '}
+                                      · {profile.industry}.{' '}
                                       {profile.businessAddress
                                         ? 'Business address: ' +
                                           profile.businessAddress +
@@ -1086,8 +1091,9 @@ export function ValuationModelRunner({
                                           0,
                                           10
                                         )}
-                                        ; issuer profile identity verified at
-                                        retrieval.
+                                        .{' '}
+                                        {profile.identityVerification ||
+                                          'Issuer CIK and ticker verified in the live SEC profile.'}
                                       </p>
                                     ) : null}
                                     <p>
@@ -1096,7 +1102,9 @@ export function ValuationModelRunner({
                                         target='_blank'
                                         rel='noopener noreferrer'
                                       >
-                                        SEC issuer profile
+                                        {profile.provider === 'Wikimedia'
+                                          ? 'Wikidata company profile'
+                                          : 'SEC issuer profile'}
                                       </a>
                                       {profile.filing ? (
                                         <>
@@ -1117,6 +1125,26 @@ export function ValuationModelRunner({
                                       <blockquote>
                                         {profile.filing.businessExcerpt}
                                       </blockquote>
+                                    ) : null}
+                                    {profile.businessDescription ? (
+                                      <>
+                                        <blockquote>
+                                          {profile.businessDescription}
+                                        </blockquote>
+                                        <p>
+                                          <a
+                                            href={
+                                              profile.businessDescriptionUrl
+                                            }
+                                            target='_blank'
+                                            rel='noopener noreferrer'
+                                          >
+                                            Public business description
+                                          </a>{' '}
+                                          · Wikipedia excerpt: CC BY-SA;
+                                          Wikidata structured description: CC0.
+                                        </p>
+                                      </>
                                     ) : null}
                                     {profile.warnings.map((warning) => (
                                       <p key={warning}>{warning}</p>
