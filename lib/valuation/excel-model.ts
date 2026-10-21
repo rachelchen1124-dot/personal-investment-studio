@@ -984,6 +984,36 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         'percent'
       )
     }
+    let rationaleRow = rangeRow + 6
+    w.section(rationaleRow++, 'Peer rationales and public sources')
+    for (const peer of rows) {
+      w.section(rationaleRow++, peer.issuerId)
+      // Long, cited rationales also get a readable appendix instead of relying
+      // on a single compact cell in the comparison table.
+      for (const line of noteLines(peer.rationale))
+        w.put('C' + rationaleRow++, line, 'note')
+      const research = settings.peerSelections[peer.issuerId]?.research
+      if (research?.applied) {
+        w.put(
+          'C' + rationaleRow++,
+          'Public source draft reviewed: ' + (research.reviewed ? 'Yes' : 'No'),
+          'note'
+        )
+        for (const profile of [research.target, research.peer]) {
+          if (!profile) continue
+          for (const line of noteLines(
+            `${profile.name} · profile retrieved ${profile.retrievedAt}. Current SEC metadata: ${profile.profileUrl}`
+          ))
+            w.put('C' + rationaleRow++, line, 'note')
+          if (profile.filing)
+            for (const line of noteLines(
+              `${profile.filing.form} filed ${profile.filing.filed}: ${profile.filing.url}`
+            ))
+              w.put('C' + rationaleRow++, line, 'note')
+        }
+      }
+      rationaleRow++
+    }
     peers.freezeRows = 5
   }
   const w = writer(summary)

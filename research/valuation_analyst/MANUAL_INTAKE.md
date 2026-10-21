@@ -78,6 +78,24 @@ thousands and individual shares. The user must confirm this mixed-unit profile,
 currency and saved formula results. Pending/error cells remain unavailable;
 metadata errors do not discard otherwise readable company rows.
 
+**Fetch public information** retrieves SEC profiles and dated annual-report
+references for the target and requested US-listed peers. Fetch one peer or all
+selected peers. A cited draft fills only an empty rationale; existing text is
+preserved, with a separate option to use the fetched draft. The industry screen,
+short business excerpts where available, and uploaded metric scale comparison
+are evidence for analyst review, not an automatic peer-selection decision.
+Generated rationales require a source-and-rationale review checkbox before RV
+calculation. Editing the text resets that review. Citations remain in the Excel
+Comps sheet and CSV rationale. Only issuer IDs and the information date are sent
+to the research endpoint; financial files and calculations stay in the browser.
+
+SEC ticker and profile metadata are current at retrieval. Filing selection uses
+only annual reports filed on or before the valuation date; current metadata is
+not represented as a historical snapshot. Missing reports, unsupported exchanges,
+identity ambiguities and blocked source requests remain visible. No company
+description is invented and no paid vendor entitlement is required. The endpoint
+uses fixed SEC hosts, bounded responses, serial requests and short-lived caches.
+
 Two independent optional buttons populate blank inputs. **Fill valuation
 defaults** supplies 10% WACC, 2.5% terminal growth and 12% terminal ROIC without
 editing the forecast table. **Fill forecast defaults** supplies 5% revenue growth,
