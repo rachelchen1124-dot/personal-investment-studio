@@ -7,6 +7,10 @@ import {
   type Upload
 } from '@/lib/valuation/manual-intake.mjs'
 import {
+  applyPeerResearch,
+  type PublicCompanyProfile
+} from '@/lib/valuation/peer-research'
+import {
   executeDcf,
   executeRelative,
   fillForecastDefaults,
@@ -108,6 +112,13 @@ export function ValuationModelRunner({
   )
   const [exporting, setExporting] = React.useState(false)
   const [exportError, setExportError] = React.useState('')
+  const [researchBusy, setResearchBusy] = React.useState(false)
+  const [researchMessage, setResearchMessage] = React.useState('')
+  const [researchErrors, setResearchErrors] = React.useState<
+    Record<string, string>
+  >({})
+  const profileCache = React.useRef(new Map<string, PublicCompanyProfile>())
+  const researchController = React.useRef<AbortController | null>(null)
   const feedbackRef = React.useRef<HTMLParagraphElement>(null)
   const dcfResultsRef = React.useRef<HTMLElement>(null)
   const rvResultsRef = React.useRef<HTMLElement>(null)
@@ -116,6 +127,7 @@ export function ValuationModelRunner({
   const dcfRun = dcf?.signature === signature ? dcf.run : null
   const rvRun = relative?.signature === signature ? relative.run : null
   const preview = peerPreview(model, settings.multiple)
+  React.useEffect(() => () => researchController.current?.abort(), [])
   React.useEffect(() => {
     if (!currentFeedback) return
     const target =
@@ -144,6 +156,98 @@ export function ValuationModelRunner({
       {note ? <small className={styles.inputHint}>{note}</small> : null}
     </label>
   )
+  async function researchPeers(issuerIds: string[]) {
+    if (researchBusy || !issuerIds.length) return
+    const controller = new AbortController()
+    researchController.current = controller
+    setResearchBusy(true)
+    setResearchMessage(
+      'Fetching SEC issuer profiles and annual-report references…'
+    )
+    setResearchErrors((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([id]) => !issuerIds.includes(id))
+      )
+    )
+    async function profile(issuerId: string) {
+      const key = issuerId + ':' + context.valuationDate
+      const cached = profileCache.current.get(key)
+      if (cached) return cached
+      const response = await fetch(
+        '/api/valuation/peer-profile?' +
+          new URLSearchParams({ issuerId, asOf: context.valuationDate }),
+        { signal: controller.signal }
+      )
+      const payload = (await response.json()) as {
+        error?: string
+        profile?: PublicCompanyProfile
+      }
+      if (
+        !response.ok ||
+        payload.profile?.issuerId !== issuerId.trim().toUpperCase()
+      )
+        throw new Error(
+          payload.error || 'The public issuer identity could not be verified.'
+        )
+      const result = payload.profile as PublicCompanyProfile
+      profileCache.current.set(key, result)
+      return result
+    }
+    let completed = 0
+    try {
+      const target = await profile(context.issuerId)
+      for (const issuerId of issuerIds) {
+        if (controller.signal.aborted) return
+        try {
+          const peer = await profile(issuerId)
+          const item = preview.peers.find(
+            (candidate) => candidate.issuerId === issuerId
+          )!
+          if (controller.signal.aborted) return
+          setSettings((current) => ({
+            ...current,
+            peerSelections: {
+              ...current.peerSelections,
+              [issuerId]: applyPeerResearch(
+                current.peerSelections[issuerId],
+                target,
+                peer,
+                {
+                  field: preview.field,
+                  targetValue: preview.target?.value,
+                  peerValue: item.metric?.value,
+                  period: item.metric?.period.endDate
+                }
+              )
+            }
+          }))
+          completed++
+          setResearchMessage(
+            `Public information fetched for ${completed} of ${issuerIds.length} requested peers. Existing rationales are preserved; review any filled drafts below.`
+          )
+        } catch (err) {
+          if (controller.signal.aborted) return
+          setResearchErrors((current) => ({
+            ...current,
+            [issuerId]:
+              err instanceof Error
+                ? err.message
+                : 'Public information could not be fetched.'
+          }))
+        }
+      }
+      setResearchMessage(
+        `Fetched public information for ${completed} of ${issuerIds.length} peers. ${completed < issuerIds.length ? 'See the peer-specific messages below. ' : ''}Review sources and draft rationales before calculating.`
+      )
+    } catch (err) {
+      if (!controller.signal.aborted)
+        setResearchMessage(
+          `Target issuer lookup: ${err instanceof Error ? err.message : 'Public SEC information is unavailable.'}`
+        )
+    } finally {
+      if (!controller.signal.aborted) setResearchBusy(false)
+    }
+  }
   function run(method: Method) {
     try {
       if (method === 'dcf')
@@ -782,6 +886,48 @@ export function ValuationModelRunner({
             prices remain per share. I have reviewed saved formula results and
             accounting definitions.
           </label>
+          <div className={styles.bottomActions}>
+            <button
+              type='button'
+              className={styles.secondary}
+              disabled={
+                researchBusy ||
+                !preview.peers.some(
+                  (peer) =>
+                    !peer.reason &&
+                    settings.peerSelections[peer.issuerId]?.included
+                )
+              }
+              onClick={() =>
+                researchPeers(
+                  preview.peers
+                    .filter(
+                      (peer) =>
+                        !peer.reason &&
+                        settings.peerSelections[peer.issuerId]?.included
+                    )
+                    .map((peer) => peer.issuerId)
+                )
+              }
+            >
+              {researchBusy
+                ? 'Fetching public information…'
+                : 'Fetch public information for selected peers'}
+            </button>
+          </div>
+          <p className={styles.caption}>
+            Fetch SEC issuer profiles and annual-report references, then fill
+            blank rationales with a cited draft. Existing text is preserved.
+            Only issuer identifiers and the valuation date are sent for lookup;
+            uploaded files stay in your browser. SEC coverage is limited to
+            supported US listings. Current profile metadata is labeled
+            separately from filings available by your valuation date.
+          </p>
+          {researchMessage ? (
+            <p className={styles.status} role='status'>
+              {researchMessage}
+            </p>
+          ) : null}
           <div className={styles.tableWrap}>
             <table className={styles.reviewTable}>
               <thead>
@@ -795,76 +941,228 @@ export function ValuationModelRunner({
                 </tr>
               </thead>
               <tbody>
-                {preview.peers.map((peer) => (
-                  <tr key={peer.issuerId}>
-                    <td>
-                      <label className={styles.peerChoice}>
-                        <input
-                          type='checkbox'
-                          checked={Boolean(
+                {preview.peers.map((peer) => {
+                  const selection = settings.peerSelections[peer.issuerId]
+                  const research = selection?.research
+                  return (
+                    <tr key={peer.issuerId}>
+                      <td>
+                        <label className={styles.peerChoice}>
+                          <input
+                            type='checkbox'
+                            checked={Boolean(
+                              settings.peerSelections[peer.issuerId]?.included
+                            )}
+                            disabled={Boolean(peer.reason)}
+                            onChange={(event) =>
+                              set('peerSelections', {
+                                ...settings.peerSelections,
+                                [peer.issuerId]: {
+                                  ...settings.peerSelections[peer.issuerId],
+                                  rationale:
+                                    settings.peerSelections[peer.issuerId]
+                                      ?.rationale || '',
+                                  included: event.target.checked
+                                }
+                              })
+                            }
+                          />
+                          {peer.issuerId}
+                        </label>
+                      </td>
+                      <td>
+                        {format(peer.numerator?.value)} /{' '}
+                        {format(peer.metric?.value)}
+                        <small>
+                          {!peer.reason && peer.metric?.value
+                            ? format(
+                                peer.numerator!.value! / peer.metric.value
+                              ) + '×'
+                            : '—'}
+                        </small>
+                      </td>
+                      <td>
+                        {peer.metric?.period.endDate || 'Missing'}
+                        <small>
+                          {peer.reason ||
+                            'Period aligned; review business comparability'}
+                        </small>
+                      </td>
+                      <td>
+                        <textarea
+                          aria-label={'Rationale for ' + peer.issuerId}
+                          rows={research?.applied ? 8 : 2}
+                          value={
+                            settings.peerSelections[peer.issuerId]?.rationale ||
+                            ''
+                          }
+                          disabled={Boolean(peer.reason)}
+                          required={Boolean(
                             settings.peerSelections[peer.issuerId]?.included
                           )}
-                          disabled={Boolean(peer.reason)}
                           onChange={(event) =>
                             set('peerSelections', {
                               ...settings.peerSelections,
                               [peer.issuerId]: {
-                                rationale:
+                                ...settings.peerSelections[peer.issuerId],
+                                included:
                                   settings.peerSelections[peer.issuerId]
-                                    ?.rationale || '',
-                                included: event.target.checked
+                                    ?.included || false,
+                                rationale: event.target.value,
+                                ...(research
+                                  ? {
+                                      research: { ...research, reviewed: false }
+                                    }
+                                  : {})
                               }
                             })
                           }
+                          placeholder='Products, end markets, margins, growth and accounting adjustments'
                         />
-                        {peer.issuerId}
-                      </label>
-                    </td>
-                    <td>
-                      {format(peer.numerator?.value)} /{' '}
-                      {format(peer.metric?.value)}
-                      <small>
-                        {!peer.reason && peer.metric?.value
-                          ? format(peer.numerator!.value! / peer.metric.value) +
-                            '×'
-                          : '—'}
-                      </small>
-                    </td>
-                    <td>
-                      {peer.metric?.period.endDate || 'Missing'}
-                      <small>
-                        {peer.reason ||
-                          'Period aligned; review business comparability'}
-                      </small>
-                    </td>
-                    <td>
-                      <textarea
-                        aria-label={'Rationale for ' + peer.issuerId}
-                        rows={2}
-                        value={
-                          settings.peerSelections[peer.issuerId]?.rationale ||
-                          ''
-                        }
-                        disabled={Boolean(peer.reason)}
-                        required={Boolean(
-                          settings.peerSelections[peer.issuerId]?.included
-                        )}
-                        onChange={(event) =>
-                          set('peerSelections', {
-                            ...settings.peerSelections,
-                            [peer.issuerId]: {
-                              included:
-                                settings.peerSelections[peer.issuerId]
-                                  ?.included || false,
-                              rationale: event.target.value
-                            }
-                          })
-                        }
-                        placeholder='Products, end markets, margins, growth and accounting adjustments'
-                      />
-                    </td>
-                  </tr>
-                ))}
+                        <button
+                          type='button'
+                          className={styles.secondary}
+                          aria-label={
+                            'Fetch public information for ' + peer.issuerId
+                          }
+                          disabled={researchBusy || Boolean(peer.reason)}
+                          onClick={() => researchPeers([peer.issuerId])}
+                        >
+                          Fetch public information
+                        </button>
+                        {researchErrors[peer.issuerId] ? (
+                          <p className={styles.error} role='alert'>
+                            {researchErrors[peer.issuerId]}
+                          </p>
+                        ) : null}
+                        {research ? (
+                          <>
+                            {research.target.warnings.length ||
+                            research.peer.warnings.length ? (
+                              <p className={styles.notice}>
+                                Some filing information is unavailable. Review
+                                the public-source details below.
+                              </p>
+                            ) : null}
+                            <details className={styles.hints}>
+                              <summary>
+                                Public sources and business excerpts
+                              </summary>
+                              <p>
+                                Profiles retrieved{' '}
+                                {research.peer.retrievedAt.slice(0, 10)} contain
+                                current metadata. Annual reports below were
+                                filed on or before {context.valuationDate}. A
+                                business address does not establish revenue
+                                geography.
+                              </p>
+                              {[
+                                ['Target', research.target],
+                                ['Peer', research.peer]
+                              ].map(([label, item]) => {
+                                const profile = item as PublicCompanyProfile
+                                return (
+                                  <div key={String(label)}>
+                                    <p>
+                                      <strong>
+                                        {String(label)}: {profile.name}
+                                      </strong>{' '}
+                                      · {profile.ticker} · {profile.exchange} ·
+                                      CIK {profile.cik}
+                                    </p>
+                                    <p>
+                                      SEC SIC {profile.sic || 'unavailable'} ·{' '}
+                                      {profile.industry}.{' '}
+                                      {profile.businessAddress
+                                        ? 'Business address: ' +
+                                          profile.businessAddress +
+                                          '.'
+                                        : ''}
+                                    </p>
+                                    <p>
+                                      <a
+                                        href={profile.profileUrl}
+                                        target='_blank'
+                                        rel='noopener noreferrer'
+                                      >
+                                        SEC issuer profile
+                                      </a>
+                                      {profile.filing ? (
+                                        <>
+                                          {' '}
+                                          ·{' '}
+                                          <a
+                                            href={profile.filing.url}
+                                            target='_blank'
+                                            rel='noopener noreferrer'
+                                          >
+                                            {profile.filing.form} · filed{' '}
+                                            {profile.filing.filed}
+                                          </a>
+                                        </>
+                                      ) : null}
+                                    </p>
+                                    {profile.filing?.businessExcerpt ? (
+                                      <blockquote>
+                                        {profile.filing.businessExcerpt}
+                                      </blockquote>
+                                    ) : null}
+                                    {profile.warnings.map((warning) => (
+                                      <p key={warning}>{warning}</p>
+                                    ))}
+                                  </div>
+                                )
+                              })}
+                            </details>
+                            {!research.applied ? (
+                              <button
+                                type='button'
+                                className={styles.secondary}
+                                onClick={() =>
+                                  set('peerSelections', {
+                                    ...settings.peerSelections,
+                                    [peer.issuerId]: {
+                                      ...selection!,
+                                      rationale: research.draft,
+                                      research: {
+                                        ...research,
+                                        applied: true,
+                                        reviewed: false
+                                      }
+                                    }
+                                  })
+                                }
+                              >
+                                Use fetched draft for {peer.issuerId}
+                              </button>
+                            ) : (
+                              <label className={styles.confirm}>
+                                <input
+                                  type='checkbox'
+                                  checked={research.reviewed}
+                                  onChange={(event) =>
+                                    set('peerSelections', {
+                                      ...settings.peerSelections,
+                                      [peer.issuerId]: {
+                                        ...selection!,
+                                        research: {
+                                          ...research,
+                                          reviewed: event.target.checked
+                                        }
+                                      }
+                                    })
+                                  }
+                                />
+                                I reviewed the public sources and rationale for{' '}
+                                {peer.issuerId}.
+                              </label>
+                            )}
+                          </>
+                        ) : null}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

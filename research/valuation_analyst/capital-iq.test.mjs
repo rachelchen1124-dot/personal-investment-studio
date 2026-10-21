@@ -502,6 +502,49 @@ test('selected peers require a nonempty explanation without an arbitrary minimum
   )
 })
 
+test('a fetched peer rationale requires review and its cited text survives the Excel export', () => {
+  const records = mapped()
+  const settings = settingsFor(records)
+  const selection = settings.peerSelections['NYSE:PEER1']
+  selection.rationale =
+    'SEC industry screen. Source: https://data.sec.gov/submissions/CIK0000000456.json'
+  selection.research = { applied: true, reviewed: false }
+  assert.throws(
+    () => executeRelative(records, context, settings),
+    /Review the public sources and generated rationale for NYSE:PEER1/
+  )
+  selection.research.reviewed = true
+  const relative = executeRelative(records, context, settings)
+  assert.equal(
+    relative.result.included.find((peer) => peer.issuerId === 'NYSE:PEER1')
+      .rationale,
+    selection.rationale
+  )
+  const workbook = buildValuationWorkbook({
+    records,
+    context,
+    settings,
+    relative
+  })
+  assert.ok(
+    workbook.sheets
+      .find((sheet) => sheet.name === 'Comps')
+      .cells.some((cell) => cell.value === selection.rationale)
+  )
+  const comps = workbook.sheets.find((sheet) => sheet.name === 'Comps')
+  assert.ok(
+    comps.cells.some(
+      (cell) => cell.value === 'Peer rationales and public sources'
+    )
+  )
+  assert.ok(
+    comps.cells.some(
+      (cell) =>
+        cell.address.startsWith('C') && cell.value === selection.rationale
+    )
+  )
+})
+
 test('missing inputs, currency errors, unreviewed assumptions and economic dilution cannot silently become a valuation', () => {
   const records = mapped()
   const settings = settingsFor(records)

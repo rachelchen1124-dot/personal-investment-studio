@@ -1,3 +1,4 @@
+import type { PeerSelection } from './peer-research.ts'
 import {
   calculateDcf,
   calculateDcfSensitivity,
@@ -52,7 +53,7 @@ export type RunSettings = {
   dcfReview: boolean
   peerProfileReview: boolean
   multiple: Multiple
-  peerSelections: Record<string, { included: boolean; rationale: string }>
+  peerSelections: Record<string, PeerSelection>
 }
 const monetaryShareFields = new Set([
   'basicShares',
@@ -659,9 +660,14 @@ export function executeRelative(
     period,
     targetMetric: { value: target.value!, sourceId: target.source.id },
     peers: selected.map((peer) => {
+      const selection = settings.peerSelections[peer.issuerId]!
       requireValue(
-        settings.peerSelections[peer.issuerId]!.rationale.trim().length > 0,
+        selection.rationale.trim().length > 0,
         `Add a comparability rationale for ${peer.issuerId}, or remove it from the selected peers.`
+      )
+      requireValue(
+        !selection.research?.applied || selection.research.reviewed,
+        `Review the public sources and generated rationale for ${peer.issuerId} before calculating.`
       )
       requireValue(
         peer.metric && peer.numerator,
