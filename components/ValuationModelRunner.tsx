@@ -174,13 +174,14 @@ export function ValuationModelRunner({
       const cached = profileCache.current.get(key)
       if (cached) return cached
       const response = await fetch(
-        '/api/valuation/peer-profile?' +
+        '/api/valuation/public-background?' +
           new URLSearchParams({ issuerId, asOf: context.valuationDate }),
-        { signal: controller.signal }
+        { signal: controller.signal, cache: 'no-store' }
       )
       const payload = (await response.json()) as {
         error?: string
         profile?: PublicCompanyProfile
+        researchVersion?: string
       }
       if (
         !response.ok ||
@@ -190,6 +191,10 @@ export function ValuationModelRunner({
           payload.error || 'The public issuer identity could not be verified.'
         )
       const result = payload.profile as PublicCompanyProfile
+      if (payload.researchVersion !== 'public-background-v3')
+        throw new Error(
+          'The public research response could not be verified. Your existing rationale has been preserved.'
+        )
       profileCache.current.set(key, result)
       return result
     }
