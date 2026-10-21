@@ -9,6 +9,8 @@ import {
 import {
   executeDcf,
   executeRelative,
+  fillForecastDefaults,
+  fillValuationDefaults,
   type ForecastRow,
   initialSettings,
   type IntakeContext,
@@ -427,9 +429,7 @@ export function ValuationModelRunner({
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (err) {
       setExportError(
-        err instanceof Error
-          ? err.message
-          : 'Unable to export the Excel model.'
+        err instanceof Error ? err.message : 'Unable to export the Excel model.'
       )
     } finally {
       setExporting(false)
@@ -594,33 +594,39 @@ export function ValuationModelRunner({
             {input('terminalRoic', 'Terminal ROIC (%)')}
           </div>
           <p className={styles.caption}>
-            Forecast ratios are proposed from aligned historical periods where
-            available. Growth, cash taxes and discount rates need an analyst
-            assumption. The terminal model requires reinvestment of growth /
-            ROIC.
+            Set the discount rate and terminal assumptions for this DCF. The
+            terminal model requires reinvestment of growth / ROIC.
           </p>
           <button
             type='button'
             onClick={() =>
-              setSettings((current) => ({
-                ...current,
-                wacc: '10',
-                terminalGrowth: '2.5',
-                terminalRoic: '12',
-                forecasts: current.forecasts.map((row) => ({
-                  ...row,
-                  growth: '5',
-                  tax: '25'
-                }))
-              }))
+              setSettings((current) => fillValuationDefaults(current))
             }
           >
-            Fill illustrative rates: 5% growth, 25% tax, 10% WACC, 2.5% terminal
-            growth, 12% ROIC
+            Fill valuation defaults: 10% WACC, 2.5% terminal growth, 12% ROIC
           </button>
           <p className={styles.caption}>
-            These illustrative rates are scenario assumptions, not sourced
-            forecasts or a company-specific WACC estimate.
+            Fills blank valuation-rate fields with illustrative scenario
+            assumptions. Review these rates for the company being valued.
+          </p>
+          <h4>Five-year forecast assumptions</h4>
+          <p className={styles.caption}>
+            Forecast operating ratios are proposed from aligned historical
+            periods where available. Enter growth and cash-tax assumptions, or
+            use the separate forecast defaults below.
+          </p>
+          <button
+            type='button'
+            onClick={() =>
+              setSettings((current) => fillForecastDefaults(current, model))
+            }
+          >
+            Fill forecast defaults: 5% growth, 25% tax and historical ratios
+          </button>
+          <p className={styles.caption}>
+            Fills blank table cells with illustrative growth and tax rates and
+            available historical operating ratios. Existing entries are
+            preserved. Review these assumptions before calculating.
           </p>
           <div className={styles.tableWrap}>
             <table className={styles.reviewTable}>

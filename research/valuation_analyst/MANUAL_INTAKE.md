@@ -78,9 +78,13 @@ thousands and individual shares. The user must confirm this mixed-unit profile,
 currency and saved formula results. Pending/error cells remain unavailable;
 metadata errors do not discard otherwise readable company rows.
 
-The optional illustrative-rates button sets 5% revenue growth, 25% cash tax,
-10% WACC, 2.5% terminal growth and 12% terminal ROIC. These are visibly labeled
-scenario assumptions, not retrieved market data or company-specific forecasts.
+Two independent optional buttons populate blank inputs. **Fill valuation
+defaults** supplies 10% WACC, 2.5% terminal growth and 12% terminal ROIC without
+editing the forecast table. **Fill forecast defaults** supplies 5% revenue growth,
+25% cash tax and available aligned historical operating ratios without editing
+the valuation rates. Both preserve existing entries, including explicit zeros.
+Missing historical ratios remain blank. The rates are visibly labeled scenario
+assumptions, not retrieved market data or company-specific forecasts.
 The page requires explicit assumption and source confirmations before calculating.
 The additional analyst note is optional: numeric inputs and review confirmations
 are retained in the calculation audit without requiring a minimum note length.
