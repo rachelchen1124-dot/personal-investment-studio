@@ -95,6 +95,11 @@ not represented as a historical snapshot. Missing reports, unsupported exchanges
 identity ambiguities and blocked source requests remain visible. No company
 description is invented and no paid vendor entitlement is required. The endpoint
 uses fixed SEC hosts, bounded responses, serial requests and short-lived caches.
+If the live SEC ticker directory is unavailable to the host, a dated copy of
+the public directory provides the CIK lookup. The live submissions response must
+still match that CIK and ticker before any issuer profile is accepted. The cache
+capture date remains visible; it does not become a cached financial fact or a
+historical profile snapshot.
 
 Two independent optional buttons populate blank inputs. **Fill valuation
 defaults** supplies 10% WACC, 2.5% terminal growth and 12% terminal ROIC without

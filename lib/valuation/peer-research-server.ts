@@ -1,6 +1,7 @@
 import { validDate } from './manual-intake.mjs'
 import { type PublicCompanyProfile } from './peer-research.ts'
 import { defaultSecUserAgent } from './sec.ts'
+import bundledDirectory from './sec-ticker-directory.json' with { type: 'json' }
 
 type TickerEntry = {
   cik: string
@@ -15,8 +16,9 @@ const cache = new Map<
   string,
   { expires: number; profile: PublicCompanyProfile }
 >()
-let tickerCache: { expires: number; entries: TickerEntry[] } | undefined
-let tickerPending: Promise<TickerEntry[]> | undefined
+type TickerDirectory = { entries: TickerEntry[]; capturedAt?: string }
+let tickerCache: (TickerDirectory & { expires: number }) | undefined
+let tickerPending: Promise<TickerDirectory> | undefined
 let requestQueue = Promise.resolve()
 const maxJsonBytes = 8 * 1024 * 1024
 const maxFilingBytes = 18 * 1024 * 1024
@@ -232,7 +234,11 @@ async function boundedText(response: Response, maxBytes: number) {
 export async function fetchPublicPeerProfile(
   issuerInput: string,
   dateInput: string,
-  options: { fetcher?: typeof fetch; skipCache?: boolean } = {}
+  options: {
+    fetcher?: typeof fetch
+    skipCache?: boolean
+    tickerFallback?: unknown
+  } = {}
 ): Promise<PublicCompanyProfile> {
   const { issuerId, asOf } = validatePeerRequest(issuerInput, dateInput)
   const key = issuerId + ':' + asOf
@@ -259,7 +265,7 @@ export async function fetchPublicPeerProfile(
       })
       if (!response.ok)
         throw new Error(
-          `SEC returned HTTP ${response.status}. Public research is temporarily unavailable; your existing rationale has been preserved.`
+          `SEC ${url.includes('company_tickers') ? 'ticker directory' : url.includes('/submissions/') ? 'issuer profile' : 'filing'} returned HTTP ${response.status}. Public research is temporarily unavailable; your existing rationale has been preserved.`
         )
       return await boundedText(response, limit)
     } finally {
@@ -269,21 +275,51 @@ export async function fetchPublicPeerProfile(
     }
   }
   async function loadTickers() {
-    return parseSecTickers(
-      JSON.parse(
-        await request('https://www.sec.gov/files/company_tickers_exchange.json')
+    try {
+      return {
+        entries: parseSecTickers(
+          JSON.parse(
+            await request(
+              'https://www.sec.gov/files/company_tickers_exchange.json'
+            )
+          )
+        )
+      }
+    } catch (err) {
+      const saved: unknown =
+        options.tickerFallback === undefined
+          ? bundledDirectory
+          : options.tickerFallback
+      if (
+        !jsonObject(saved) ||
+        saved.source !==
+          'https://www.sec.gov/files/company_tickers_exchange.json' ||
+        typeof saved.retrievedAt !== 'string' ||
+        !validDate(saved.retrievedAt.slice(0, 10)) ||
+        saved.retrievedAt.slice(0, 10) >
+          new Date().toISOString().slice(0, 10) ||
+        !Array.isArray(saved.data)
       )
-    )
+        throw err
+      const entries = parseSecTickers({
+        fields: ['cik', 'name', 'ticker', 'exchange'],
+        data: saved.data.map((row: unknown) =>
+          Array.isArray(row) ? [row[0], row[1], row[1], row[2]] : []
+        )
+      })
+      if (!entries.length) throw err
+      return { entries, capturedAt: saved.retrievedAt }
+    }
   }
-  let entries: TickerEntry[]
-  if (options.skipCache) entries = await loadTickers()
+  let directory: TickerDirectory
+  if (options.skipCache) directory = await loadTickers()
   else if (tickerCache && tickerCache.expires > Date.now())
-    entries = tickerCache.entries
+    directory = tickerCache
   else {
     tickerPending ??= loadTickers()
       .then((items) => {
         tickerCache = {
-          entries: items,
+          ...items,
           expires: Date.now() + 24 * 60 * 60 * 1000
         }
         return items
@@ -291,9 +327,9 @@ export async function fetchPublicPeerProfile(
       .finally(() => {
         tickerPending = undefined
       })
-    entries = await tickerPending
+    directory = await tickerPending
   }
-  const resolved = resolveSecIssuer(issuerId, entries)
+  const resolved = resolveSecIssuer(issuerId, directory.entries)
   const profileUrl = `https://data.sec.gov/submissions/CIK${resolved.cik}.json`
   const data: unknown = JSON.parse(await request(profileUrl))
   if (
@@ -336,6 +372,7 @@ export async function fetchPublicPeerProfile(
     profileUrl,
     informationDate: asOf,
     retrievedAt: new Date().toISOString(),
+    directoryRetrievedAt: directory.capturedAt,
     warnings
   }
   const filing = selectAnnualFiling(
