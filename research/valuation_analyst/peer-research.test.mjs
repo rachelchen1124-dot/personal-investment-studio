@@ -168,6 +168,7 @@ test('source failures and identity mismatches never become invented issuer facts
   await assert.rejects(
     fetchPublicPeerProfile('DEMO', '2026-10-21', {
       skipCache: true,
+      tickerFallback: null,
       fetcher: async () => new Response('', { status: 403 })
     }),
     /HTTP 403/
@@ -197,6 +198,47 @@ test('source failures and identity mismatches never become invented issuer facts
   })
   assert.equal(result.filing.businessExcerpt, undefined)
   assert.match(result.warnings.join(' '), /filing text could not be retrieved/)
+})
+
+test('a blocked ticker directory can use a dated SEC cache while still requiring live issuer identity verification', async () => {
+  const tickerFallback = {
+    source: 'https://www.sec.gov/files/company_tickers_exchange.json',
+    retrievedAt: '2026-10-21T12:00:00Z',
+    data: [[123, 'DEMO', 'Nasdaq']]
+  }
+  const fetcher = async (url) =>
+    url.endsWith('company_tickers_exchange.json')
+      ? new Response('', { status: 403 })
+      : Response.json({
+          cik: 123,
+          name: 'Synthetic Target',
+          tickers: ['DEMO'],
+          sic: '2810',
+          sicDescription: 'Industrial chemicals'
+        })
+  const result = await fetchPublicPeerProfile('NASDAQGS:DEMO', '2026-10-21', {
+    fetcher,
+    skipCache: true,
+    tickerFallback
+  })
+  assert.equal(result.cik, '0000000123')
+  assert.equal(result.directoryRetrievedAt, tickerFallback.retrievedAt)
+  await assert.rejects(
+    fetchPublicPeerProfile('NASDAQGS:DEMO', '2026-10-21', {
+      fetcher,
+      skipCache: true,
+      tickerFallback: { ...tickerFallback, data: [[999, 'DEMO', 'Nasdaq']] }
+    }),
+    /identity does not match/
+  )
+  await assert.rejects(
+    fetchPublicPeerProfile('NASDAQGS:DEMO', '2026-10-21', {
+      fetcher,
+      skipCache: true,
+      tickerFallback: { ...tickerFallback, retrievedAt: '2999-01-01T00:00:00Z' }
+    }),
+    /HTTP 403/
+  )
 })
 
 test('drafts cite evidence, flag different industries and preserve manual work and review gates', () => {

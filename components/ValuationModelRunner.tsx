@@ -1079,6 +1079,17 @@ export function ValuationModelRunner({
                                           '.'
                                         : ''}
                                     </p>
+                                    {profile.directoryRetrievedAt ? (
+                                      <p>
+                                        Ticker lookup: SEC directory captured{' '}
+                                        {profile.directoryRetrievedAt.slice(
+                                          0,
+                                          10
+                                        )}
+                                        ; issuer profile identity verified at
+                                        retrieval.
+                                      </p>
+                                    ) : null}
                                     <p>
                                       <a
                                         href={profile.profileUrl}

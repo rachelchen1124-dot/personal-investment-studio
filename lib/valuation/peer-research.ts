@@ -9,6 +9,7 @@ export type PublicCompanyProfile = {
   businessAddress: string
   profileUrl: string
   retrievedAt: string
+  directoryRetrievedAt?: string
   informationDate: string
   filing?: {
     form: string
@@ -97,6 +98,10 @@ export function draftPeerRationale(
       )
     if (profile.warnings.length)
       parts.push(`${label} source limits: ${profile.warnings.join(' ')}`)
+    if (profile.directoryRetrievedAt)
+      parts.push(
+        `${label} ticker lookup used the SEC directory captured ${profile.directoryRetrievedAt.slice(0, 10)}; the returned issuer profile's CIK and ticker were verified at retrieval.`
+      )
   }
   return parts.join('\n\n')
 }
