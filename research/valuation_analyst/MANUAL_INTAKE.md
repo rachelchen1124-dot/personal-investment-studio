@@ -88,21 +88,30 @@ Errors appear immediately after the button for the requested method and receive
 keyboard focus. Successful runs focus and scroll to that model's result section.
 Changes invalidate displayed results until recalculation.
 
-The **Download valuation report (Excel CSV)** action exports human-readable model
-inputs, forecasts, sensitivity, peer ranges, selections and source-cell audit
-trails. It contains calculated values, not an editable formula-linked XLSX model.
+The **Download linked Excel model (.xlsx)** action exports a formatted workbook
+with a valuation summary, editable forecast assumptions and equity bridge, linked
+DCF formulas, reported financials, original historical source tables and a
+source-cell ledger. A calculated RV adds a formula-linked comps build. Uploaded
+consensus stays on its own reference tab. Only current calculated methods are
+included; a DCF run is not required for an RV-only export.
+
+The DCF uses a native two-variable Excel What-If Data Table linked to the actual
+WACC and terminal growth input cells. Cached values match the calculation engine;
+Excel is configured for automatic recalculation including Data Tables. Missing
+required inputs remain unavailable, while explicit zero assumptions are kept.
+The separate **Download data report (.csv)** retains the previous data report.
 
 ## Persistence and scope
 
 Files, assumptions and calculations stay in browser memory and are not sent to a
 server or AI service. Download an intake JSON backup to preserve raw source tables
-and cell mappings; download the CSV report to preserve valuation assumptions and
+and cell mappings; download the Excel model or CSV report to preserve valuation assumptions and
 results. Closing/reloading the tab discards the active unsaved session.
 
 This is a guided deterministic valuation workflow, not an autonomous research
 agent. Banks, insurers, REITs, fiscal stub periods, detailed NOL schedules and
-security-specific option modelling require separate methods. A formula-linked
-Excel workbook and autonomous analyst orchestration remain future work.
+security-specific option modelling require separate methods. Detailed forecast
+balance sheets, debt schedules and autonomous analyst orchestration remain future work.
 
 Automated checks cover manual intake and native layouts/workflow in
 `manual-intake.test.mjs` and `capital-iq.test.mjs`. Fixtures use synthetic numbers;

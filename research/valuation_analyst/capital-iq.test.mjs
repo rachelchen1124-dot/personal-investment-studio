@@ -3,6 +3,12 @@ import test from 'node:test'
 
 import { proposeImport, restoreIntake } from '../../lib/valuation/capital-iq.ts'
 import { normalizeManual } from '../../lib/valuation/manual-intake.mjs'
+import { buildValuationWorkbook } from '../../lib/valuation/excel-model.ts'
+import { calculateDcf } from '../../lib/valuation/engine.ts'
+import {
+  workbookEntries,
+  writeValuationXlsx
+} from '../../lib/valuation/write-workbook.ts'
 import {
   executeDcf,
   executeRelative,
@@ -181,6 +187,100 @@ function settingsFor(records) {
     }
   return settings
 }
+
+test('linked Excel forecasts, bridge and nine sensitivity cells reconcile to the valuation engine', () => {
+  const records = mapped(),
+    settings = settingsFor(records)
+  settings.wacc = '8.8'
+  settings.terminalGrowth = '1'
+  const dcf = executeDcf(records, context, settings)
+  const relative = executeRelative(records, context, settings)
+  const workbook = buildValuationWorkbook({
+    records,
+    context,
+    settings,
+    dcf,
+    relative,
+    files: inputs()
+  })
+  const sheet = workbook.sheets.find((sheet) => sheet.name === 'DCF')
+  const cell = (address) => sheet.cells.find((cell) => cell.address === address)
+  const close = (actual, expected) =>
+    assert.ok(
+      Math.abs(actual - expected) < 1e-8,
+      `${actual} differs from ${expected}`
+    )
+  close(cell('E62').value, dcf.result.valuePerShare)
+  close(cell('E46').value, dcf.result.enterpriseValue)
+  dcf.result.forecast.forEach((year, index) => {
+    const col = String.fromCharCode(70 + index)
+    close(cell(col + '20').value, year.revenue)
+    close(cell(col + '24').value, year.cashTaxes)
+    close(cell(col + '29').value, year.changeWorkingCapital)
+    close(cell(col + '30').value, year.fcff)
+    close(cell(col + '34').value, year.pvFcff)
+    assert.ok(cell(col + '30').formula.includes(col + '29'))
+  })
+  for (let row = 73; row <= 75; row++)
+    for (let column = 3; column <= 5; column++) {
+      const col = String.fromCharCode(65 + column)
+      const result = calculateDcf({
+        ...dcf.input,
+        wacc: { ...dcf.input.wacc, value: cell('C' + row).value },
+        terminalGrowth: {
+          ...dcf.input.terminalGrowth,
+          value: cell(col + '72').value
+        }
+      })
+      close(cell(col + row).value, result.valuePerShare)
+    }
+  const xml = workbookEntries(workbook)
+  assert.match(
+    xml['xl/worksheets/sheet2.xml'],
+    /t="dataTable" ref="D73:F75" dt2D="1" r1="E8" r2="E7"/
+  )
+  assert.match(xml['xl/workbook.xml'], /calcMode="auto"/)
+  assert.match(
+    workbook.sheets
+      .find((sheet) => sheet.name === 'Comps')
+      .cells.find((cell) => cell.address === 'E14').formula,
+    /'DCF'/
+  )
+  const bytes = writeValuationXlsx(workbook)
+  const view = new DataView(bytes.buffer)
+  assert.equal(view.getUint32(0, true), 0x04034b50)
+  assert.equal(view.getUint32(bytes.length - 22, true), 0x06054b50)
+  assert.equal(view.getUint16(bytes.length - 12, true), Object.keys(xml).length)
+})
+
+test('Excel export keeps missing capital inputs unavailable, preserves literal text and supports RV alone', () => {
+  const records = mapped(),
+    settings = settingsFor(records)
+  settings.preferred = ''
+  settings.assumptionsNote =
+    '=HYPERLINK("https://example.test","Literal <text> & source")'
+  const workbook = buildValuationWorkbook({ records, context, settings })
+  const dcf = workbook.sheets.find((sheet) => sheet.name === 'DCF')
+  const cell = (address) => dcf.cells.find((cell) => cell.address === address)
+  assert.equal(cell('E54').value, null)
+  assert.equal(cell('E56').value, 'n.a.')
+  assert.equal(cell('E62').value, 'n.a.')
+  assert.equal(typeof cell('E46').value, 'number')
+  assert.match(cell('E56').formula, /COUNT/)
+  const xml = workbookEntries(workbook)['xl/worksheets/sheet2.xml']
+  assert.match(xml, /t="inlineStr"><is><t xml:space="preserve">=HYPERLINK/)
+  assert.match(xml, /&lt;text&gt; &amp; source/)
+  const valid = settingsFor(records)
+  const relative = executeRelative(records, context, valid)
+  const rvOnly = buildValuationWorkbook({
+    records,
+    context: { ...context, mode: 'rv' },
+    settings: { ...valid, wacc: '', forecasts: [] },
+    relative
+  })
+  assert.ok(!rvOnly.sheets.some((sheet) => sheet.name === 'DCF'))
+  assert.ok(rvOnly.sheets.some((sheet) => sheet.name === 'Comps'))
+})
 
 test('native statements map periods, aliases and actual share counts without duplicate revenue or D&A', () => {
   const records = mapped()

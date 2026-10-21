@@ -3,7 +3,8 @@ import * as React from 'react'
 import type { Multiple } from '@/lib/valuation/engine'
 import {
   fields,
-  type NormalizedManual
+  type NormalizedManual,
+  type Upload
 } from '@/lib/valuation/manual-intake.mjs'
 import {
   executeDcf,
@@ -77,11 +78,13 @@ function csvDownload(name: string, rows: (string | number | null)[][]) {
 export function ValuationModelRunner({
   records,
   context,
-  onReview
+  onReview,
+  files
 }: {
   records: NormalizedManual[]
   context: IntakeContext
   onReview: () => void
+  files?: Upload[]
 }) {
   const model = React.useMemo(
     () => prepareModel(records, context),
@@ -101,6 +104,8 @@ export function ValuationModelRunner({
   const [feedback, setFeedback] = React.useState<CalculationFeedback | null>(
     null
   )
+  const [exporting, setExporting] = React.useState(false)
+  const [exportError, setExportError] = React.useState('')
   const feedbackRef = React.useRef<HTMLParagraphElement>(null)
   const dcfResultsRef = React.useRef<HTMLElement>(null)
   const rvResultsRef = React.useRef<HTMLElement>(null)
@@ -388,6 +393,47 @@ export function ValuationModelRunner({
       context.issuerId.replaceAll(/[^a-z\d-]/gi, '-') + '-valuation-report.csv',
       rows
     )
+  }
+
+  async function exportExcelModel() {
+    setExporting(true)
+    setExportError('')
+    try {
+      const [{ buildValuationWorkbook }, { writeValuationXlsx }] =
+        await Promise.all([
+          import('@/lib/valuation/excel-model'),
+          import('@/lib/valuation/write-workbook')
+        ])
+      const model = buildValuationWorkbook({
+        records,
+        context,
+        settings,
+        dcf: dcfRun,
+        relative: rvRun,
+        files
+      })
+      const bytes = writeValuationXlsx(model)
+      const url = URL.createObjectURL(
+        new Blob([bytes], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        })
+      )
+      const link = document.createElement('a')
+      link.href = url
+      link.download =
+        context.issuerId.replaceAll(/[^a-z\d-]/gi, '-') +
+        '-valuation-model.xlsx'
+      link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) {
+      setExportError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to export the Excel model.'
+      )
+    } finally {
+      setExporting(false)
+    }
   }
 
   return (
@@ -1045,9 +1091,26 @@ export function ValuationModelRunner({
           <button
             type='button'
             className={styles.primary}
-            onClick={exportResults}
+            onClick={() => void exportExcelModel()}
+            disabled={exporting}
           >
-            Download valuation report (Excel CSV)
+            {exporting
+              ? 'Preparing Excel model…'
+              : 'Download linked Excel model (.xlsx)'}
+          </button>
+          <p className={styles.caption}>
+            Includes editable assumptions, linked formulas, historical
+            financials, source references and the results calculated above. The
+            DCF includes a native Excel sensitivity table. Recalculate Data
+            Tables in Excel after editing inputs.
+          </p>
+          {exportError ? (
+            <p className={styles.error} role='alert'>
+              {exportError}
+            </p>
+          ) : null}
+          <button type='button' onClick={exportResults}>
+            Download data report (.csv)
           </button>
           <details>
             <summary>Model diagnostics and limitations</summary>
