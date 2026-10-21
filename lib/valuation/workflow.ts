@@ -347,10 +347,6 @@ function shared(
     'Confirm the equity bridge and economic share-count assumptions below.'
   )
   requireValue(
-    settings.assumptionsNote.trim().length >= 10,
-    'Document your valuation assumptions and capital adjustments (at least 10 characters).'
-  )
-  requireValue(
     /^[A-Z]{3}$/.test(settings.currency),
     'Choose a three-letter model currency.'
   )
@@ -358,7 +354,7 @@ function shared(
     id: 'analyst:valuation-run',
     kind: 'analyst',
     asOf: context.valuationDate,
-    locator: `User-confirmed model assumptions, bridge, dilution and historical run-rate carry-forward: ${settings.assumptionsNote}`
+    locator: `User-confirmed model inputs, equity bridge, dilution and review acknowledgements are recorded in this calculation input. ${settings.assumptionsNote.trim() ? 'Additional analyst note: ' + settings.assumptionsNote.trim() : 'No additional analyst note supplied.'}`
   }
   const sources = [
     ...new Map(
@@ -635,8 +631,8 @@ export function executeRelative(
     targetMetric: { value: target.value!, sourceId: target.source.id },
     peers: selected.map((peer) => {
       requireValue(
-        settings.peerSelections[peer.issuerId]!.rationale.trim().length >= 10,
-        `Document why ${peer.issuerId} is comparable (at least 10 characters).`
+        settings.peerSelections[peer.issuerId]!.rationale.trim().length > 0,
+        `Add a comparability rationale for ${peer.issuerId}, or remove it from the selected peers.`
       )
       requireValue(
         peer.metric && peer.numerator,

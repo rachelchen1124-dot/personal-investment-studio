@@ -276,6 +276,44 @@ test('DCF runs from native statement uploads without peers or consensus; RV runs
   assert.equal(rv.result.median.valuePerShare, 19.18)
 })
 
+test('optional analyst notes never block either model and confirmed numerical assumptions remain auditable', () => {
+  const records = mapped()
+  const settings = settingsFor(records)
+  const expectedDcf = executeDcf(records, context, settings).result
+    .valuePerShare
+  const expectedRv = executeRelative(records, context, settings).result.median
+    .valuePerShare
+  for (const assumptionsNote of ['', '  ', 'OK']) {
+    const runSettings = { ...settings, assumptionsNote }
+    const dcf = executeDcf(records, context, runSettings)
+    const rv = executeRelative(records, context, runSettings)
+    assert.equal(dcf.result.valuePerShare, expectedDcf)
+    assert.equal(rv.result.median.valuePerShare, expectedRv)
+    assert.equal(dcf.input.wacc.value, 0.1)
+    assert.equal(dcf.input.capitalization.preferredEquity.value, 0)
+    assert.match(
+      dcf.input.sources.find((source) => source.id === 'analyst:valuation-run')
+        .locator,
+      /recorded in this calculation input/
+    )
+  }
+})
+
+test('selected peers require a nonempty explanation without an arbitrary minimum character count', () => {
+  const records = mapped()
+  const settings = settingsFor(records)
+  settings.peerSelections['NYSE:PEER1'].rationale = 'Sector'
+  assert.equal(
+    executeRelative(records, context, settings).result.included.length,
+    3
+  )
+  settings.peerSelections['NYSE:PEER1'].rationale = '  '
+  assert.throws(
+    () => executeRelative(records, context, settings),
+    /Add a comparability rationale for NYSE:PEER1/
+  )
+})
+
 test('missing inputs, currency errors, unreviewed assumptions and economic dilution cannot silently become a valuation', () => {
   const records = mapped()
   const settings = settingsFor(records)
