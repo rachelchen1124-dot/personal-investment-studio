@@ -222,11 +222,11 @@ test('linked Excel forecasts, bridge and nine sensitivity cells reconcile to the
     assert.ok(cell(col + '30').formula.includes(col + '29'))
   })
   for (let row = 73; row <= 75; row++)
-    for (let column = 3; column <= 5; column++) {
+    for (let column = 5; column <= 7; column++) {
       const col = String.fromCharCode(65 + column)
       const result = calculateDcf({
         ...dcf.input,
-        wacc: { ...dcf.input.wacc, value: cell('C' + row).value },
+        wacc: { ...dcf.input.wacc, value: cell('E' + row).value },
         terminalGrowth: {
           ...dcf.input.terminalGrowth,
           value: cell(col + '72').value
@@ -237,9 +237,10 @@ test('linked Excel forecasts, bridge and nine sensitivity cells reconcile to the
   const xml = workbookEntries(workbook)
   assert.match(
     xml['xl/worksheets/sheet2.xml'],
-    /t="dataTable" ref="D73:F75" dt2D="1" r1="E8" r2="E7"/
+    /t="dataTable" ref="F73:H75" dt2D="1" r1="E8" r2="E7"/
   )
   assert.match(xml['xl/workbook.xml'], /calcMode="auto"/)
+  assert.ok(sheet.widths.slice(5, 8).every((width) => width >= 12))
   assert.match(
     workbook.sheets
       .find((sheet) => sheet.name === 'Comps')
@@ -270,6 +271,23 @@ test('Excel export keeps missing capital inputs unavailable, preserves literal t
   const xml = workbookEntries(workbook)['xl/worksheets/sheet2.xml']
   assert.match(xml, /t="inlineStr"><is><t xml:space="preserve">=HYPERLINK/)
   assert.match(xml, /&lt;text&gt; &amp; source/)
+  const longNote =
+    'Review the terminal operating assumptions and capital claims before using the valuation. '
+      .repeat(12)
+      .trim()
+  const notes = buildValuationWorkbook({
+    records,
+    context,
+    settings: { ...settings, assumptionsNote: longNote }
+  })
+    .sheets.find((sheet) => sheet.name === 'DCF')
+    .cells.filter(
+      (cell) =>
+        /^C\d+$/.test(cell.address) && Number(cell.address.slice(1)) >= 83
+    )
+    .map((cell) => cell.value)
+  assert.ok(notes.every((note) => note.length <= 125))
+  assert.equal(notes.join(' '), longNote)
   const valid = settingsFor(records)
   const relative = executeRelative(records, context, valid)
   const rvOnly = buildValuationWorkbook({

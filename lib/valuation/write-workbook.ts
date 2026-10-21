@@ -39,7 +39,8 @@ export const excelStyles: ExcelStyle[] = [
   'totalPrice',
   'date',
   'inputDate',
-  'check'
+  'check',
+  'hidden'
 ]
 const styles: Record<ExcelStyle, [number, number, number, number]> = {
   text: [0, 0, 0, 0],
@@ -59,13 +60,14 @@ const styles: Record<ExcelStyle, [number, number, number, number]> = {
   totalPrice: [3, 3, 166, 1],
   date: [0, 0, 167, 0],
   inputDate: [5, 4, 167, 0],
-  check: [0, 0, 168, 0]
+  check: [0, 0, 168, 0],
+  hidden: [0, 0, 169, 0]
 }
 const font = (color: string, bold = false, italic = false, size = 10) =>
   `<font><sz val="${size}"/><color rgb="FF${color}"/><name val="Arial"/>${bold ? '<b/>' : ''}${italic ? '<i/>' : ''}</font>`
 export const workbookStylesXml =
   declaration +
-  `<styleSheet xmlns="${ns}"><numFmts count="5"><numFmt numFmtId="164" formatCode="#,##0.0;(#,##0.0);&quot;-&quot;"/><numFmt numFmtId="165" formatCode="0.0%;(0.0%);&quot;-&quot;"/><numFmt numFmtId="166" formatCode="0.00;(0.00);&quot;-&quot;"/><numFmt numFmtId="167" formatCode="dd-mmm-yy"/><numFmt numFmtId="168" formatCode="0.00;(0.00);0.00"/></numFmts><fonts count="10">${font('182C3C')}${font('182C3C', true, false, 14)}${font('FFFFFF', true)}${font('182C3C', true)}${font('657582', false, true, 9)}${font('0000FF')}${font('008000')}${font('182C3C', false, true)}${font('0000FF', false, true)}${font('008000', false, true)}</fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF254B6B"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE5EDF3"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top style="thin"><color rgb="FF8FA5B7"/></top><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${excelStyles.length}">${excelStyles
+  `<styleSheet xmlns="${ns}"><numFmts count="6"><numFmt numFmtId="164" formatCode="#,##0.0;(#,##0.0);&quot;-&quot;"/><numFmt numFmtId="165" formatCode="0.0%;(0.0%);&quot;-&quot;"/><numFmt numFmtId="166" formatCode="0.00;(0.00);&quot;-&quot;"/><numFmt numFmtId="167" formatCode="dd-mmm-yy"/><numFmt numFmtId="168" formatCode="0.00;(0.00);0.00"/><numFmt numFmtId="169" formatCode=";;;"/></numFmts><fonts count="10">${font('182C3C')}${font('182C3C', true, false, 14)}${font('FFFFFF', true)}${font('182C3C', true)}${font('657582', false, true, 9)}${font('0000FF')}${font('008000')}${font('182C3C', false, true)}${font('0000FF', false, true)}${font('008000', false, true)}</fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF254B6B"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE5EDF3"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top style="thin"><color rgb="FF8FA5B7"/></top><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${excelStyles.length}">${excelStyles
     .map((key) => {
       const [fontId, fillId, numFmtId, borderId] = styles[key]
       const right = [
