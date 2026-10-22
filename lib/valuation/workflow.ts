@@ -298,9 +298,35 @@ export function prepareModel(
     targetScreen[0]?.currency ||
     consensus.find((record) => sameIssuer(record.issuerId, context.issuerId))
       ?.currency ||
+    target.find(
+      (record) =>
+        available(record, context.valuationDate) &&
+        record.currency &&
+        /^[A-Z]{3}$/.test(record.currency)
+    )?.currency ||
     ''
+  const inputDiagnostics: string[] = []
+  if (!target.length && records.length)
+    inputDiagnostics.push(
+      `No mapped inputs match security identifier ${context.issuerId || '(blank)'}. Check the target identifier against the uploaded statements: ${[...new Set(records.filter((record) => ['historicals', 'capital'].includes(record.source.section)).map((record) => record.issuerId))].slice(0, 5).join(', ') || 'no target statements mapped'}.`
+    )
+  else if (!statements.length)
+    inputDiagnostics.push(
+      'No historical or capital-structure statement inputs are mapped for this target. Upload those files or reopen an intake backup. Forward peer multiples do not supply the target’s cash, debt or historical cash-flow inputs.'
+    )
+  else if (!Object.values(annual).some(Boolean)) {
+    const issue = statements
+      .flatMap((record) => record.issues)
+      .find((item) => item.code !== 'REVIEW_REQUIRED')
+    inputDiagnostics.push(
+      issue
+        ? `Historical inputs need review: ${issue.message}`
+        : 'Historical inputs were found, but no complete annual/LTM period or four consecutive reported quarters is available. Check period labels and dates in source mappings.'
+    )
+  }
   return {
     context,
+    inputDiagnostics,
     annual,
     capital,
     tradeWorkingCapital,

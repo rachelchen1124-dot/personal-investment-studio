@@ -1,7 +1,15 @@
 import * as React from 'react'
 
+import type { RunSettings } from '@/lib/valuation/workflow'
 import { ValuationModelRunner } from '@/components/ValuationModelRunner'
-import { proposeImport, restoreIntake } from '@/lib/valuation/capital-iq'
+import { proposeImport } from '@/lib/valuation/capital-iq'
+import {
+  loadIntakeDraft,
+  type ModelDraft,
+  rebuildIntake,
+  recoverModelDraft,
+  saveIntakeDraft
+} from '@/lib/valuation/intake-draft'
 import {
   cellAddress,
   type Classification,
@@ -206,6 +214,9 @@ export function ValuationDataIntake() {
   const [mode, setMode] = React.useState<Mode>('both')
   const [uploads, setUploads] = React.useState<Upload[]>([])
   const [observations, setObservations] = React.useState<Observation[]>([])
+  const [draftLoaded, setDraftLoaded] = React.useState(false)
+  const [draftStatus, setDraftStatus] = React.useState('')
+  const [modelDraft, setModelDraft] = React.useState<ModelDraft | null>(null)
   const [stage, setStage] = React.useState<
     'upload' | 'map' | 'review' | 'model'
   >('upload')
@@ -234,15 +245,102 @@ export function ValuationDataIntake() {
   const pasting = pasteCategory !== null
 
   React.useEffect(() => {
-    const today = new Date()
-    setValuationDate(
-      [
-        today.getFullYear(),
-        String(today.getMonth() + 1).padStart(2, '0'),
-        String(today.getDate()).padStart(2, '0')
-      ].join('-')
-    )
+    let active = true
+    void (async () => {
+      try {
+        const draft = await loadIntakeDraft()
+        if (!active) return
+        if (draft) {
+          const restored = rebuildIntake(draft.pack)
+          setUploads(restored.files)
+          setObservations(restored.observations)
+          setImportNotes(restored.notes)
+          setCompany(restored.context.company)
+          setIssuerId(restored.context.issuerId)
+          setValuationDate(restored.context.valuationDate)
+          setMode(restored.context.mode)
+          setSelectedId(restored.files[0]?.id || '')
+          setModelDraft(recoverModelDraft(draft.model))
+          setStage(
+            ['upload', 'map', 'review', 'model'].includes(draft.stage)
+              ? draft.stage
+              : 'review'
+          )
+          setMessage(
+            `Recovered ${restored.files.length} saved workbooks and ${restored.observations.length} mapped inputs from this browser. Your model inputs are retained; review confirmations before calculating.`
+          )
+        }
+      } catch {
+        if (active)
+          setDraftStatus(
+            'Browser autosave is unavailable. Keep an intake backup to recover your uploaded files.'
+          )
+      } finally {
+        if (active) {
+          const today = new Date()
+          setValuationDate(
+            (current) =>
+              current ||
+              [
+                today.getFullYear(),
+                String(today.getMonth() + 1).padStart(2, '0'),
+                String(today.getDate()).padStart(2, '0')
+              ].join('-')
+          )
+          setDraftLoaded(true)
+        }
+      }
+    })()
+    return () => {
+      active = false
+    }
   }, [])
+  React.useEffect(() => {
+    if (!draftLoaded || !valuationDate) return
+    let active = true
+    if (uploads.length) setDraftStatus('Saving your valuation on this browser…')
+    const timer = window.setTimeout(() => {
+      void saveIntakeDraft({
+        schema: 'valuation-browser-draft-v1',
+        pack: {
+          schema: 'valuation-manual-intake-v1',
+          context: { company, issuerId, valuationDate, mode },
+          files: uploads,
+          originalObservations: observations
+        },
+        stage,
+        model: modelDraft
+      })
+        .then(() => {
+          if (active)
+            setDraftStatus(
+              uploads.length
+                ? 'Uploads, mappings and model inputs saved on this browser.'
+                : ''
+            )
+        })
+        .catch(() => {
+          if (active)
+            setDraftStatus(
+              'Browser autosave is unavailable. Download an intake backup before leaving this page.'
+            )
+        })
+    }, 400)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [
+    draftLoaded,
+    company,
+    issuerId,
+    valuationDate,
+    mode,
+    uploads,
+    observations,
+    stage,
+    modelDraft
+  ])
   React.useEffect(() => {
     if (editing) editDialog.current?.showModal()
     else editDialog.current?.close()
@@ -642,6 +740,7 @@ export function ValuationDataIntake() {
       readyForModelExecution: false,
       files: uploads,
       originalObservations: observations,
+      model: modelDraft,
       records,
       missingUploadSections: missingSections,
       remaining: [
@@ -665,44 +764,28 @@ export function ValuationDataIntake() {
     try {
       if (input.size > 10 * 1024 * 1024)
         throw new Error('Use an intake JSON smaller than 10 MB.')
-      const restored = restoreIntake(JSON.parse(await input.text()))
-      const proposals = restored.files.map((file) =>
-        proposeImport(file, restored.context.issuerId)
-      )
-      setUploads(proposals.map((proposal) => proposal.file))
-      const occupied = new Set(
-        restored.observations.map((item) =>
-          [item.fileId, item.sheet, item.row, item.column].join('|')
-        )
-      )
-      setObservations([
-        ...restored.observations,
-        ...proposals
-          .flatMap((proposal) => proposal.observations)
-          .filter(
-            (item) =>
-              !occupied.has(
-                [item.fileId, item.sheet, item.row, item.column].join('|')
-              )
-          )
-      ])
-      setImportNotes(
-        Object.fromEntries(
-          proposals.map((proposal) => [proposal.file.id, proposal.notes])
+      const raw = JSON.parse(await input.text())
+      const restored = rebuildIntake(raw)
+      setUploads(restored.files)
+      setObservations(restored.observations)
+      setImportNotes(restored.notes)
+      setModelDraft(
+        recoverModelDraft(
+          raw && typeof raw === 'object' && 'model' in raw ? raw.model : null
         )
       )
       setCompany(restored.context.company)
       setIssuerId(restored.context.issuerId)
       setValuationDate(restored.context.valuationDate)
       setMode(restored.context.mode)
-      setSelectedId(proposals[0]?.file.id || '')
+      setSelectedId(restored.files[0]?.id || '')
       setSheetName('')
       setRowPage(0)
       setColumnPage(0)
       setReviewPage(0)
       setStage('review')
       setMessage(
-        `Restored ${restored.files.length} workbooks and mapped ${proposals.reduce((sum, proposal) => sum + proposal.observations.length, 0)} financial observations. Review currency proposals and model assumptions, then build your valuation.`
+        `Restored ${restored.files.length} workbooks and mapped ${restored.observations.length} financial observations. Review currency proposals and model assumptions, then build your valuation.`
       )
     } catch (err) {
       setError(
@@ -721,8 +804,25 @@ export function ValuationDataIntake() {
     issuerId,
     valuationDate,
     mode,
-    records
+    records.map((record) => ({
+      ...record,
+      issues: record.issues.filter((issue) => issue.code !== 'REVIEW_REQUIRED')
+    }))
   ])
+  const rememberModelSettings = React.useCallback(
+    (settings: RunSettings) => {
+      if (stage !== 'model') return
+      setModelDraft((current) =>
+        current?.signature === modelKey && current.settings === settings
+          ? current
+          : { signature: modelKey, settings }
+      )
+    },
+    [modelKey, stage]
+  )
+
+  if (!draftLoaded)
+    return <p role='status'>Restoring your saved valuation workspace…</p>
 
   return (
     <div className={styles.workspace + ' ph-no-capture ph-mask'}>
@@ -1444,6 +1544,10 @@ export function ValuationDataIntake() {
           key={modelKey}
           records={records}
           files={uploads}
+          initialRunSettings={
+            modelDraft?.signature === modelKey ? modelDraft.settings : undefined
+          }
+          onSettingsChange={rememberModelSettings}
           context={{ company, issuerId, valuationDate, mode }}
           onReview={() => setStage('review')}
         />
@@ -1451,7 +1555,7 @@ export function ValuationDataIntake() {
       <p className={styles.privacy}>
         Files and calculations stay in your browser. Review data and
         assumptions, run either valuation, then download the report. Save an
-        intake JSON backup to reopen the source tables later.
+        intake JSON backup for another browser or device. {draftStatus}
       </p>
 
       <dialog

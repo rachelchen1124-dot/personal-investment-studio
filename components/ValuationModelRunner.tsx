@@ -87,20 +87,27 @@ export function ValuationModelRunner({
   records,
   context,
   onReview,
-  files
+  files,
+  initialRunSettings,
+  onSettingsChange
 }: {
   records: NormalizedManual[]
   context: IntakeContext
   onReview: () => void
   files?: Upload[]
+  initialRunSettings?: RunSettings
+  onSettingsChange?: (settings: RunSettings) => void
 }) {
   const model = React.useMemo(
     () => prepareModel(records, context),
     [records, context]
   )
-  const [settings, setSettings] = React.useState<RunSettings>(() =>
-    initialSettings(model)
+  const [settings, setSettings] = React.useState<RunSettings>(
+    () => initialRunSettings || initialSettings(model)
   )
+  React.useEffect(() => {
+    onSettingsChange?.(settings)
+  }, [settings, onSettingsChange])
   const [dcf, setDcf] = React.useState<{
     signature: string
     run: DcfRun
@@ -674,29 +681,62 @@ export function ValuationModelRunner({
           a recognized Capital IQ export or map the source values.
         </p>
       ) : null}
-      <div className={styles.modelFacts}>
-        {['revenue', 'ebit', 'da', 'capex'].map((field) => (
-          <div key={field}>
-            <small>
-              {fields[field]} ·{' '}
-              {model.annual[field]?.endDate || 'annual base missing'}
-            </small>
-            <strong>{format(model.annual[field]?.value)}</strong>
-            <small>
-              {model.annual[field]?.method ||
-                'Add an annual period or four consecutive quarters'}
-            </small>
+      {model.inputDiagnostics.length ? (
+        <aside
+          className={styles.notice}
+          aria-label='Imported data availability'
+        >
+          {model.inputDiagnostics.map((message) => (
+            <p key={message}>{message}</p>
+          ))}
+          {files?.some(
+            (file) =>
+              !records.some((record) =>
+                record.source.locator.startsWith(file.name + ' > ')
+              )
+          ) ? (
+            <p>
+              Some uploaded files have no mapped values. Open source review to
+              check their import notes and mappings.
+            </p>
+          ) : null}
+        </aside>
+      ) : null}
+      {context.mode !== 'rv' ? (
+        <>
+          <div className={styles.modelFacts}>
+            {['revenue', 'ebit', 'da', 'capex'].map((field) => (
+              <div key={field}>
+                <small>
+                  {fields[field]} ·{' '}
+                  {model.annual[field]?.endDate || 'annual base missing'}
+                </small>
+                <strong>{format(model.annual[field]?.value)}</strong>
+                <small>
+                  {model.annual[field]?.method ||
+                    'Add an annual period or four consecutive quarters'}
+                </small>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      <p className={styles.notice}>
-        The historical base ends{' '}
-        {model.annual.revenue?.endDate || 'at an unresolved date'}. The DCF
-        carries this run rate to {context.valuationDate} and projects five full
-        rolling years. Review intervening events. Forward consensus can supply
-        RV earnings; it remains separate from the DCF forecast and is not
-        relabeled as NTM.
-      </p>
+          {model.annual.revenue ? (
+            <p className={styles.notice}>
+              The historical base ends{' '}
+              {model.annual.revenue?.endDate || 'at an unresolved date'}. The
+              DCF carries this run rate to {context.valuationDate} and projects
+              five full rolling years. Review intervening events. Forward
+              consensus can supply RV earnings; it remains separate from the DCF
+              forecast and is not relabeled as NTM.
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className={styles.caption}>
+          Relative valuation uses the target’s matching earnings estimate and
+          uploaded peer multiples. Historical DCF inputs are shown when DCF is
+          selected.
+        </p>
+      )}
       <button type='button' onClick={onReview}>
         Review source cells and units
       </button>

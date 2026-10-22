@@ -62,6 +62,20 @@ Drafts can be exported without inventing missing values.
 
 ## Calculate and download
 
+Uploads, raw source tables, mappings and model inputs autosave in IndexedDB in the
+same browser. Refreshing restores that draft and rebuilds normalized records from
+the original tables. Recovered inputs require fresh calculation confirmations;
+previous calculated results are not treated as current. An autosave failure is
+shown explicitly. Removing the final upload removes the stored draft. Downloaded
+intake backups can also retain model inputs, and remain the way to transfer work
+to another browser or device. Older backups without observations are rebuilt from
+their raw workbooks. No uploaded financial data is sent to a server for autosave.
+
+Build valuation explains missing mappings, unmatched target identifiers and
+incomplete periods. The source currency can be proposed from valid partial target
+statements even before a full annual base is available. Relative-only mode omits
+the DCF history cards; the target equity bridge remains required for EV multiples.
+
 Reopen an existing `valuation-manual-intake-v1` JSON to recover its raw workbooks.
 The importer rebuilds native proposals and preserves validated manual cell mappings;
 previous derived records and readiness flags are not trusted. All restored sources
