@@ -17,13 +17,18 @@ export type PublicCompanyProfile = {
   businessDescriptionUrl?: string
   businessTopics?: string[]
   secAccess?: {
-    status: 'available' | 'partial' | 'unavailable' | 'no-annual-filing'
+    status:
+      | 'saved-record'
+      | 'available'
+      | 'partial'
+      | 'unavailable'
+      | 'no-annual-filing'
     stage: 'ticker-directory' | 'issuer-profile' | 'annual-report'
     code: string
     httpStatus?: number
     checkedAt: string
     retryAt?: string
-    contactConfigured: boolean
+    contactConfigured?: boolean
     filingContentRetrieved: boolean
     message: string
   }

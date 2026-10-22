@@ -51,18 +51,25 @@ references are retained but not authenticated by the math engine. See
 
 ## Run independently
 
-The peer research endpoint reads the server-only `SEC_USER_AGENT` setting. Use a
-declared application name and a real public contact email, as required by SEC's
-access guidance. Requests are serialized and cached within each warm server;
-HTTP 403/429 pauses requests to that SEC origin for at least ten minutes.
+The peer research endpoint uses suitable saved SEC records first, without making
+any external request. It validates the issuer, official URL, capture date and
+filing publication date before returning the saved profile and business excerpt.
+The response status is `saved-record`; it does not claim a successful live SEC
+connection. Records include short excerpts and official links, not full filings.
 
 On 2026-10-22, direct SEC retrieval succeeded from the collection environment but
 Vercel returned SEC's automated-traffic HTTP 403. The site therefore includes
 dated SEC profile and annual-report excerpt captures for SOLS and its ten current
-peers. A failed live lookup retains the HTTP status, labels the capture date and
-warns that newer filings are unverified. Captures cannot supply a filing published
-after the selected information date. Other issuers retain the verified Wikimedia
-fallback. This cache does not establish that Vercel has a working live SEC link.
+peers. The UI shows each filing and capture date and warns that newer filings are
+unverified. Captures cannot supply a filing published after the selected
+information date. For uncovered dates or issuers, live lookup and the verified
+Wikimedia fallback remain available. Failed live lookups retain the HTTP status.
+
+Live requests read the server-only `SEC_USER_AGENT` setting: a declared
+application and real public contact email. Requests are serialized and cached
+within each warm server; HTTP 403/429 pauses that SEC origin for at least ten
+minutes. The collector explicitly disables saved records so a refresh requires
+fresh SEC evidence.
 
 To refresh the complete source capture deliberately, set `SEC_USER_AGENT` in the
 shell environment, then run:

@@ -8,13 +8,14 @@ export type SecProfileSnapshot = {
   capturedAt: string
   profiles: PublicCompanyProfile[]
 }
+export const bundledSecProfileSnapshot = captured as SecProfileSnapshot
 const normalize = (value: string) => value.toUpperCase().replaceAll('.', '-')
 
 export function selectSecProfileSnapshot(
   identity: { cik: string; ticker: string; exchange: string },
   issuerId: string,
   asOf: string,
-  snapshot: SecProfileSnapshot = captured as SecProfileSnapshot
+  snapshot: SecProfileSnapshot = bundledSecProfileSnapshot
 ): PublicCompanyProfile | undefined {
   if (
     snapshot.format !== 'sec-profile-snapshot-v1' ||
@@ -62,7 +63,7 @@ export function selectSecProfileSnapshot(
     identityVerification: `Issuer CIK and ticker verified in the SEC capture from ${snapshot.capturedAt.slice(0, 10)}.`,
     warnings: [
       ...profile.warnings,
-      `Using an SEC source capture from ${snapshot.capturedAt.slice(0, 10)}. The live SEC connection failed; newer filings have not been verified.`
+      `Using a saved SEC record captured ${snapshot.capturedAt.slice(0, 10)}; newer filings have not been verified.`
     ]
   }
 }

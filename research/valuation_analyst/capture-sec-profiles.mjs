@@ -14,7 +14,8 @@ if (!issuers.length)
 const profiles = []
 for (const issuerId of issuers) {
   const profile = await fetchPublicPeerProfile(issuerId, asOf, {
-    skipCache: true
+    skipCache: true,
+    secSnapshot: false
   })
   const { secAccess, sourceSnapshotAt, ...source } = profile
   if (

@@ -91,6 +91,7 @@ test('an SEC rejection serves a dated primary source while retaining the failed 
   const requests = []
   const result = await fetchPublicPeerProfile('NYSE:DEMO', '2026-10-21', {
     skipCache: true,
+    preferSavedRecord: false,
     secSnapshot: snapshot,
     userAgent: 'SyntheticResearch/1.0 (contact@example.invalid)',
     fetcher: async (url) => {
@@ -126,4 +127,65 @@ test('an SEC rejection serves a dated primary source while retaining the failed 
   assert.match(draft, /SEC capture from 2026-10-21/)
   assert.ok(draft.includes(result.filing.url))
   assert.match(draft, /manufacture specialty chemicals/)
+})
+
+test('saved records return official filing evidence without any network request or SEC configuration', async () => {
+  let requests = 0
+  const result = await fetchPublicPeerProfile('NYSE:DEMO', '2026-10-21', {
+    skipCache: true,
+    secSnapshot: snapshot,
+    userAgent: 'invalid',
+    fetcher: async () => {
+      requests++
+      throw new Error('Network must not be used for a saved record')
+    }
+  })
+  assert.equal(requests, 0)
+  assert.equal(result.secAccess.status, 'saved-record')
+  assert.equal(result.secAccess.code, 'SEC_SAVED_RECORD_USED')
+  assert.equal(result.secAccess.httpStatus, undefined)
+  assert.equal(result.secAccess.retryAt, undefined)
+  assert.equal(result.secAccess.contactConfigured, undefined)
+  assert.equal(result.filing.url, snapshot.profiles[0].filing.url)
+  assert.match(
+    result.secAccess.message,
+    /filed 2026-02-01 and captured 2026-10-21/
+  )
+  const draft = draftPeerRationale(result, result, { field: 'ebitda' })
+  assert.match(draft, /newer filings have not been verified/)
+  assert.doesNotMatch(draft, /live SEC connection failed|HTTP 403/)
+})
+
+test('a saved record published after the information date cannot bypass live filing-date checks', async () => {
+  let requests = 0
+  const result = await fetchPublicPeerProfile('NYSE:DEMO', '2026-01-31', {
+    skipCache: true,
+    secSnapshot: snapshot,
+    fetcher: async (url) => {
+      requests++
+      if (url.includes('company_tickers'))
+        return Response.json({
+          fields: ['cik', 'name', 'ticker', 'exchange'],
+          data: [[123, 'Synthetic Company', 'DEMO', 'NYSE']]
+        })
+      return Response.json({
+        cik: 123,
+        name: 'Synthetic Company',
+        tickers: ['DEMO'],
+        filings: {
+          recent: {
+            form: ['10-K'],
+            filingDate: ['2026-02-01'],
+            reportDate: ['2025-12-31'],
+            accessionNumber: ['0000000123-26-000001'],
+            primaryDocument: ['annual.htm']
+          }
+        }
+      })
+    }
+  })
+  assert.equal(requests, 2)
+  assert.equal(result.sourceSnapshotAt, undefined)
+  assert.equal(result.filing, undefined)
+  assert.equal(result.secAccess.status, 'no-annual-filing')
 })

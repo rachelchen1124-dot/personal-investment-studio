@@ -179,7 +179,8 @@ export function ValuationModelRunner({
       if (
         cached &&
         Date.now() - cached.cachedAt <
-          (cached.profile.secAccess?.status === 'available'
+          (cached.profile.secAccess?.status === 'available' ||
+          cached.profile.secAccess?.status === 'saved-record'
             ? 60 * 60_000
             : 5 * 60_000)
       )
@@ -983,15 +984,15 @@ export function ValuationModelRunner({
             ) : null}
           </div>
           <p className={styles.caption}>
-            Fetch public company background and available SEC annual-report
-            references, then create cited drafts. If live SEC access fails, a
-            dated SEC source capture is used where available; otherwise a
-            verified Wikidata / Wikipedia profile is labeled. Untouched drafts
-            can refresh; your edits are preserved. Only issuer identifiers and
-            the valuation date are sent for lookup; uploaded files stay in your
-            browser. SEC coverage is limited to supported US listings. Current
-            profile metadata is labeled separately from filings available by
-            your valuation date.
+            Use saved SEC filing records where available to create cited drafts.
+            Each record shows its filing and capture dates; newer filings are
+            not checked automatically. If no suitable record is available, a
+            live lookup is attempted and any verified Wikidata / Wikipedia
+            fallback is labeled. Untouched drafts can refresh; your edits are
+            preserved. Only issuer identifiers and the valuation date are sent
+            for lookup; uploaded files stay in your browser. SEC coverage is
+            limited to supported US listings. Current profile metadata is
+            labeled separately from filings available by your valuation date.
           </p>
           {researchMessage ? (
             <p className={styles.status} role='status'>
@@ -1128,12 +1129,19 @@ export function ValuationModelRunner({
                                 <p
                                   key={label}
                                   className={
-                                    profile.secAccess.status === 'available'
+                                    profile.secAccess.status === 'available' ||
+                                    profile.secAccess.status === 'saved-record'
                                       ? styles.status
                                       : styles.notice
                                   }
                                 >
-                                  <strong>{label} SEC connection:</strong>{' '}
+                                  <strong>
+                                    {label} SEC{' '}
+                                    {profile.secAccess.status === 'saved-record'
+                                      ? 'record'
+                                      : 'connection'}
+                                    :
+                                  </strong>{' '}
                                   {profile.secAccess.message}{' '}
                                   {profile.secAccess.status === 'unavailable' &&
                                   !profile.sourceSnapshotAt

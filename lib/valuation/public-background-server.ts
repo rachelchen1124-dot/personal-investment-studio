@@ -5,6 +5,7 @@ import {
   type PublicCompanyProfile
 } from './peer-research.ts'
 import {
+  bundledSecProfileSnapshot,
   type SecProfileSnapshot,
   selectSecProfileSnapshot
 } from './sec-profile-snapshots.ts'
@@ -235,9 +236,37 @@ export async function fetchPublicPeerProfile(
     tickerFallback?: unknown
     userAgent?: string
     secSnapshot?: SecProfileSnapshot | false
+    preferSavedRecord?: boolean
   } = {}
 ): Promise<PublicCompanyProfile> {
   const { issuerId, asOf } = validatePeerRequest(issuerInput, dateInput)
+  // Resolve the saved issuer record locally before constructing a live client
+  // or requesting the ticker directory. A record read must make no SEC call.
+  if (options.secSnapshot !== false && options.preferSavedRecord !== false) {
+    const saved = options.secSnapshot ?? bundledSecProfileSnapshot
+    let identity: TickerEntry | undefined
+    try {
+      identity = resolveSecIssuer(issuerId, saved.profiles)
+    } catch {
+      // Listings not covered by the saved records use the existing live path.
+    }
+    const record = identity
+      ? selectSecProfileSnapshot(identity, issuerId, asOf, saved)
+      : undefined
+    if (record) {
+      return {
+        ...record,
+        secAccess: {
+          status: 'saved-record',
+          stage: 'annual-report',
+          code: 'SEC_SAVED_RECORD_USED',
+          checkedAt: new Date().toISOString(),
+          filingContentRetrieved: false,
+          message: `Using saved SEC ${record.filing!.form}, filed ${record.filing!.filed} and captured ${record.sourceSnapshotAt!.slice(0, 10)}.`
+        }
+      }
+    }
+  }
   const key = issuerId + ':' + asOf
   if (!options.skipCache) {
     const cached = cache.get(key)
