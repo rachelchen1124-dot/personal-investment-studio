@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import Link from 'next/link'
 
 import type { PageProps } from '@/lib/types'
@@ -47,7 +48,13 @@ function HomeSnapshot() {
 
       <main className={styles.main}>
         <div className={styles.cover}>
-          <img src='/studio-cover.jpg' alt='London skyline' />
+          <Image
+            src='/studio-cover.jpg'
+            alt='London skyline'
+            fill
+            sizes='(max-width: 900px) calc(100vw - 36px), 960px'
+            priority
+          />
           <img className={styles.icon} src='/studio-icon.jpg' alt='' />
         </div>
 
