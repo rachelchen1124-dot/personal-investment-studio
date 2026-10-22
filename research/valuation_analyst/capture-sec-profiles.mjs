@@ -16,15 +16,16 @@ for (const issuerId of issuers) {
   const profile = await fetchPublicPeerProfile(issuerId, asOf, {
     skipCache: true
   })
+  const { secAccess, sourceSnapshotAt, ...source } = profile
   if (
-    profile.secAccess?.status !== 'available' ||
-    !profile.filing?.contentRetrievedAt ||
-    !profile.filing.businessExcerpt
+    secAccess?.status !== 'available' ||
+    sourceSnapshotAt ||
+    !source.filing?.contentRetrievedAt ||
+    !source.filing.businessExcerpt
   )
     throw new Error(
       `${issuerId}: no verified SEC filing capture; existing cache was preserved.`
     )
-  const { secAccess, sourceSnapshotAt, ...source } = profile
   profiles.push({ ...source, provider: 'SEC' })
   console.log(
     `${issuerId}: ${source.filing.form}, filed ${source.filing.filed}`
