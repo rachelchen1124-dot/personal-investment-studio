@@ -53,9 +53,32 @@ function statement(name, metrics, category = 'historicals') {
       ['Reporting Basis: Current/Restated'],
       ['Currency: U.S. Dollar (USD)'],
       ['Magnitude: Thousands (K)'],
-      ['', '2025 FQ3', '2025 FQ4', '2026 FQ1', '2026 FQ2'],
-      ['Period Ending', '2025-09-30', '2025-12-31', '2026-03-31', '2026-06-30'],
-      ...metrics.map(([label, values]) => [label, ...values.map(String)])
+      ['', '2025 FQ3', '2025 FQ4', '2026 FQ1', '2026 FQ2', '2025 FY'],
+      [
+        'Period Ending',
+        '2025-09-30',
+        '2025-12-31',
+        '2026-03-31',
+        '2026-06-30',
+        '2025-12-31'
+      ],
+      ...metrics.map(([label, values]) => [
+        label,
+        ...values.map(String),
+        String(
+          [
+            'Cash and Equivalents',
+            'Total Debt',
+            'Total Minority Interest',
+            'ECS Total Common Shares Outstanding (actual)',
+            'Accounts Receivable',
+            'Inventory',
+            'Accounts Payable'
+          ].includes(label)
+            ? values[1]
+            : values.reduce((sum, value) => sum + value, 0)
+        )
+      ])
     ],
     name
   )
@@ -385,7 +408,7 @@ test('native statements map periods, aliases and actual share counts without dup
       (record) =>
         record.source.section === 'historicals' && record.field === 'revenue'
     ).length,
-    4
+    5
   )
   assert.ok(records.every((record) => record.issues.length === 0))
   assert.match(

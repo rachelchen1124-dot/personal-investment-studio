@@ -1,3 +1,5 @@
+import { fiscalDcfPeriods } from './fiscal-periods.ts'
+
 /** Deterministic valuation tools. Input references are retained, not authenticated. */
 export type Source = {
   id: string
@@ -41,6 +43,8 @@ type ModelInputs = {
 }
 
 export type ForecastAssumptions = {
+  periodEnd?: string
+  fiscalYear?: number
   revenueGrowth: Observation
   ebitMargin: Observation
   cashTaxRate: Observation
@@ -51,10 +55,13 @@ export type ForecastAssumptions = {
 
 export type DcfInput = ModelInputs & {
   capitalization: Capitalization
-  // Annual run rate at the valuation date; references must explain any roll-forward.
-  base: { revenue: Observation; operatingWorkingCapital: Observation }
-  // Each forecast covers a full 12 months from the preceding model year.
-  timing: 'rolling-annual-end-period'
+  base: {
+    revenue: Observation
+    operatingWorkingCapital: Observation
+    periodEnd: string
+    fiscalYear?: number
+  }
+  timing: 'fiscal-year-end'
   forecast: ForecastAssumptions[]
   wacc: Observation
   terminalGrowth: Observation
@@ -361,8 +368,8 @@ export function calculateDcf(input: DcfInput) {
   const read = validateModel(input)
   const capital = readCapitalization(input.capitalization, read)
   requireInput(
-    input.timing === 'rolling-annual-end-period',
-    'DCF timing: this version requires full rolling annual periods with end-period discounting'
+    input.timing === 'fiscal-year-end',
+    'DCF timing: use company fiscal years with fiscal year-end discounting'
   )
   requireInput(
     Array.isArray(input.forecast) &&
@@ -380,6 +387,22 @@ export function calculateDcf(input: DcfInput) {
     'base.operatingWorkingCapital'
   )
   requireInput(previousRevenue > 0, 'base.revenue: must be positive')
+  let periods: ReturnType<typeof fiscalDcfPeriods>
+  try {
+    periods = fiscalDcfPeriods(
+      input.context.valuationDate,
+      input.base.periodEnd,
+      input.forecast.length,
+      input.base.fiscalYear,
+      input.forecast
+    )
+  } catch (err) {
+    throw new ValuationInputError(
+      err instanceof Error
+        ? err.message
+        : 'Confirm the DCF fiscal-year calendar.'
+    )
+  }
   const wacc = read(input.wacc, 'wacc')
   const growth = read(input.terminalGrowth, 'terminalGrowth')
   const roic = read(input.terminalRoic, 'terminalRoic')
@@ -397,7 +420,8 @@ export function calculateDcf(input: DcfInput) {
   )
 
   const forecast = input.forecast.map((assumptions, index) => {
-    const label = `forecast year ${index + 1}`
+    const period = periods[index]!
+    const label = period.label
     requireInput(
       assumptions && typeof assumptions === 'object',
       `${label}: an assumptions object is required`
@@ -456,11 +480,13 @@ export function calculateDcf(input: DcfInput) {
       `${label}.fcff`
     )
     const year = index + 1
-    const discountFactor = 1 / (1 + wacc) ** year
+    const remainingFcff = fcff * period.cashFlowFraction
+    const discountFactor = 1 / (1 + wacc) ** period.discountYears
     previousRevenue = revenue
     previousWorkingCapital = operatingWorkingCapital
     return {
       year,
+      ...period,
       revenue,
       ebit,
       cashTaxes,
@@ -470,8 +496,9 @@ export function calculateDcf(input: DcfInput) {
       operatingWorkingCapital,
       changeWorkingCapital,
       fcff,
+      remainingFcff,
       discountFactor,
-      pvFcff: fcff * discountFactor
+      pvFcff: remainingFcff * discountFactor
     }
   })
 
@@ -536,7 +563,7 @@ export function calculateDcf(input: DcfInput) {
     terminalValueShare,
     warnings: [
       ...details.warnings,
-      'Forecasts use full rolling 12-month periods; fiscal stub periods and mid-year discounting are not implemented.',
+      'Forecasts follow company fiscal years and use fiscal year-end discounting. Current-year FCFF is prorated by remaining fiscal-year days, assuming uniform cash flows; seasonality and detailed year-to-date reconciliations are not modeled. Completed-year cash flows are excluded.',
       'Negative EBIT receives no immediate tax credit. NOLs, future share dilution and security-specific option values need separate schedules.',
       ...(terminalValueShare !== null && terminalValueShare > 0.75
         ? [

@@ -35,13 +35,18 @@ export function sharedInputs() {
 }
 
 export function syntheticDcfInput() {
+  const shared = sharedInputs()
+  shared.context.valuationDate = '2025-12-31'
+  shared.sources[0].asOf = '2025-12-31'
   return {
-    ...sharedInputs(),
+    ...shared,
     base: {
+      periodEnd: '2025-12-31',
+      fiscalYear: 2025,
       revenue: observation(1000),
       operatingWorkingCapital: observation(100)
     },
-    timing: 'rolling-annual-end-period',
+    timing: 'fiscal-year-end',
     forecast: Array.from({ length: 5 }, () => ({
       revenueGrowth: observation(0.05),
       ebitMargin: observation(0.2),

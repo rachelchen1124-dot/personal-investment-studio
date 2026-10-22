@@ -91,7 +91,7 @@ function exportDate(name: string) {
 
 function consensusPeriod(header: string) {
   const match = header.match(
-    /^(FQ[1-4]|FY)\s+\d{4}\s*-\s*([A-Za-z]{3})\s+(\d{4})$/
+    /^(FQ[1-4]|FY)\s+(\d{4})\s*-\s*([A-Za-z]{3})\s+(\d{4})$/
   )
   if (!match) return null
   const months = [
@@ -109,15 +109,20 @@ function consensusPeriod(header: string) {
     'Dec'
   ]
   const month = months.findIndex(
-    (item) => item.toLowerCase() === match[2]!.toLowerCase()
+    (item) => item.toLowerCase() === match[3]!.toLowerCase()
   )
   if (month === -1) return null
   // This layout provides a month, not an exact date. The proposal explicitly
   // labels the month-end convention for confirmation; it is not a fiscal fact.
-  const endDate = new Date(Date.UTC(Number(match[3]), month + 1, 0))
+  const endDate = new Date(Date.UTC(Number(match[4]), month + 1, 0))
     .toISOString()
     .slice(0, 10)
-  return { basis: match[1] === 'FY' ? 'FY' : 'QTR', endDate }
+  return {
+    basis: match[1] === 'FY' ? 'FY' : 'QTR',
+    endDate,
+    fiscalYear: Number(match[2]),
+    ...(match[1] !== 'FY' ? { fiscalQuarter: Number(match[1]!.at(-1)) } : {})
+  }
 }
 
 function screenMetric(code: string) {
@@ -249,6 +254,10 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
               rawValue: clean(row[column]),
               basis,
               endDate,
+              fiscalYear:
+                Number(header.match(/^(\d{4})\s+F[QY]/)?.[1]) || undefined,
+              fiscalQuarter:
+                Number(header.match(/FQ([1-4])/)?.[1]) || undefined,
               classification: 'reported',
               currency: shares ? '' : file.currency,
               unit: shares ? 'units' : file.amountUnit,
@@ -479,6 +488,14 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
             rawValue: raw,
             basis: period.basis,
             endDate,
+            fiscalYear:
+              period.basis === 'FY'
+                ? 'fiscalYear' in period
+                  ? Number(period.fiscalYear)
+                  : /^FY\d{4}$/.test(period.key)
+                    ? Number(period.key.slice(2))
+                    : undefined
+                : undefined,
             classification: forecast ? 'consensus' : 'reported',
             currency: file.currency,
             // Financial figures inherit the editable, confirmed file scale;
@@ -630,6 +647,12 @@ export function restoreIntake(raw: unknown): {
       !Number.isInteger(observation.column) ||
       observation.row < 0 ||
       observation.column < 0 ||
+      (observation.fiscalYear !== undefined &&
+        (!Number.isInteger(observation.fiscalYear) ||
+          observation.fiscalYear < 1900 ||
+          observation.fiscalYear > 2200)) ||
+      (observation.fiscalQuarter !== undefined &&
+        ![1, 2, 3, 4].includes(observation.fiscalQuarter)) ||
       (observation.forwardPeriodConfirmation &&
         ['originalBasis', 'originalEndDate', 'note'].some(
           (key) =>

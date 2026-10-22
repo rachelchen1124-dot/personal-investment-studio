@@ -92,8 +92,8 @@ The importer rebuilds native proposals and preserves validated manual cell mappi
 previous derived records and readiness flags are not trusted. All restored sources
 need review again. JSON is an intake backup, not the primary results output.
 
-Choose **Build valuation** after source review. The screen shows historical annual
-or LTM totals, the proposed capital bridge, source dates and editable assumptions.
+Choose **Build valuation** after source review. The DCF screen shows a completed fiscal-year base, its closing working capital,
+the proposed capital bridge, source dates and editable assumptions.
 Four consecutive quarters may form LTM; a quarter is never multiplied by four.
 Consensus actuals are separate from statement actuals, and fiscal consensus is not
 relabeled NTM. Statements may use thousands while consensus uses millions; actual
@@ -102,12 +102,14 @@ confirmed explicitly, with no automatic FX conversion.
 
 DCF and relative valuation invoke the deterministic engines independently:
 
-- DCF: five rolling full annual periods from the valuation date, with end-period
-  discounting, FCFF forecast, explicit growth/ROIC terminal reinvestment, equity
-  bridge, per-share value and WACC/growth sensitivity. Historical ratios are
-  proposed only from aligned periods. Carrying the historical run rate forward,
-  a narrow trade-working-capital proxy, discount rates, taxes and all bridge
-  adjustments require explicit user review. Blank values never become zero.
+- DCF: five company fiscal years with fiscal year-end discounting, FCFF forecast,
+  explicit growth/ROIC terminal reinvestment, equity bridge, per-share value and
+  WACC/growth sensitivity. The current fiscal year's FCFF is prorated by remaining
+  days, assuming uniform cash flow; completed-year cash flow is excluded. FY
+  labels and end dates appear in the assumptions, results and Excel export.
+  Historical ratios and working capital use the same completed fiscal year.
+  Proration, seasonality, the trade-WC proxy, rates, taxes and capital adjustments
+  require user review. Blank values never become zero.
 - Relative valuation: EV/revenue, EV/EBITDA, EV/EBIT, or P/E with reconciled common
   net income. Review at least three independent peers with documented rationales,
   aligned periods, definitions and market snapshots. The target and provider

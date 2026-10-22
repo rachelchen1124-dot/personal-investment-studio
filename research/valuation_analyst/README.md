@@ -125,13 +125,20 @@ minority claims and accounting definitions need consistent treatment throughout.
 
 ## DCF conventions
 
-The first version supports nonfinancial operating companies. It uses a revenue
-run rate at the valuation date, with 1–20 subsequent full rolling annual periods
-and end-period discounting. The supplied base must explain how reported revenue
-was rolled forward, if applicable. Do not pass a partial fiscal year as a full
-annual period. Fiscal stub periods and mid-year conventions need explicit future
-support before applying them.
+The engine supports nonfinancial operating companies and follows their fiscal
+calendar. The base is a completed reported fiscal year or the sum of its four
+reported quarters, with working capital at that fiscal year-end. LTM and NTM
+are not substituted for this base. The website projects five fiscal years; the
+engine accepts 1–20 consecutive fiscal years and retains source fiscal labels,
+including companies whose fiscal year differs from the calendar year.
 
+All operating projections are full fiscal-year amounts. Only cash flows after
+the valuation date are valued: the current year's FCFF is prorated by remaining
+days in that fiscal year under a uniform-cash-flow assumption, and completed
+forecast years contribute no cash flow. Fiscal year-end discounting uses the
+same remaining-year fraction, then whole fiscal years. Terminal value is located
+at the final forecast fiscal year-end. Seasonality, detailed YTD reconciliation
+and mid-year discounting require a separate schedule.
 For each year, revenue growth, EBIT margin, cash tax rate, D&A/sales, capex/sales
 and operating working capital/sales drive the forecast. FCFF equals NOPAT plus
 D&A, less capex and the change in operating working capital. Loss-making years
@@ -174,13 +181,13 @@ RV results remain separately visible; no automatic blend conceals disagreement.
 
 ## Remaining build sequence
 
-| Increment | Deliverable | Acceptance check |
-| --- | --- | --- |
-| 1. Calculation foundation | This module, source contract, synthetic fixtures and regression checks | DCF and RV run separately; known arithmetic benchmarks and invalid-input checks pass |
-| 2. Company data | Public SEC collection and the optional capture adapter are implemented; live Microsoft SEC retrieval passed. Market snapshots, bridge and dilution reconciliation remain. | Every populated field traces to a source, unit and period; missing fields stay missing; no filing published after the information date is used. |
-| 3. Analyst workflow | Independently gather inputs for DCF or RV; propose documented assumptions/scenarios or peers; invoke deterministic tools and inspect results | A request for one method never depends on completion of the other; source facts and analyst estimates stay distinct |
-| 4. Studio and workbook output | Guided manual upload workspace is live. Reviewed inputs now connect to independent DCF/RV calculations and CSV reports. Editable, formula-linked DCF/RV XLSX exports remain future work. | Browser, API, calculation and exported workbook agree; an edited assumption recalculates dependent outputs |
-| 5. Pilot and benchmark | Run one selected company from evidence through both outputs | Reconcile historicals, EV/equity bridge and per-share values with a reviewed reference model; document differences |
+| Increment                     | Deliverable                                                                                                                                                                              | Acceptance check                                                                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Calculation foundation     | This module, source contract, synthetic fixtures and regression checks                                                                                                                   | DCF and RV run separately; known arithmetic benchmarks and invalid-input checks pass                                                            |
+| 2. Company data               | Public SEC collection and the optional capture adapter are implemented; live Microsoft SEC retrieval passed. Market snapshots, bridge and dilution reconciliation remain.                | Every populated field traces to a source, unit and period; missing fields stay missing; no filing published after the information date is used. |
+| 3. Analyst workflow           | Independently gather inputs for DCF or RV; propose documented assumptions/scenarios or peers; invoke deterministic tools and inspect results                                             | A request for one method never depends on completion of the other; source facts and analyst estimates stay distinct                             |
+| 4. Studio and workbook output | Guided manual upload workspace is live. Reviewed inputs now connect to independent DCF/RV calculations and CSV reports. Editable, formula-linked DCF/RV XLSX exports remain future work. | Browser, API, calculation and exported workbook agree; an edited assumption recalculates dependent outputs                                      |
+| 5. Pilot and benchmark        | Run one selected company from evidence through both outputs                                                                                                                              | Reconcile historicals, EV/equity bridge and per-share values with a reviewed reference model; document differences                              |
 
 Public SEC filings are the default source for reported facts. DCF will use
 documented analyst forecasts. RV now selects matching target/peer forward FY, CY

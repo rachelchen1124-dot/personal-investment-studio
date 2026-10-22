@@ -463,7 +463,9 @@ export function ValuationModelRunner({
       ],
       [
         'Timing',
-        'Five full rolling 12-month periods from valuation date; end-period discounting'
+        dcfRun
+          ? 'Company fiscal years; fiscal year-end discounting; current-year FCFF prorated by remaining days'
+          : `Relative valuation: ${preview.periodLabel}`
       ],
       [
         'Capital bridge',
@@ -499,7 +501,7 @@ export function ValuationModelRunner({
         ],
         [
           'DCF base',
-          'LTM / annual end',
+          'Completed fiscal-year end',
           dcfRun.basePeriod,
           'Revenue',
           settings.baseRevenue,
@@ -517,7 +519,7 @@ export function ValuationModelRunner({
         ],
         [
           'Forecast assumptions',
-          'Year',
+          'Fiscal year',
           'Growth %',
           'EBIT margin %',
           'Tax %',
@@ -527,7 +529,7 @@ export function ValuationModelRunner({
         ],
         ...settings.forecasts.map((row, index) => [
           'Forecast assumptions',
-          index + 1,
+          model.fiscal.periods[index]?.label || index + 1,
           row.growth,
           row.margin,
           row.tax,
@@ -537,7 +539,8 @@ export function ValuationModelRunner({
         ]),
         [
           'DCF forecast',
-          'Year',
+          'Fiscal year',
+          'Fiscal year end',
           'Revenue',
           'EBIT',
           'Cash taxes',
@@ -545,12 +548,15 @@ export function ValuationModelRunner({
           'Capex',
           'Operating WC',
           'Change in WC',
-          'FCFF',
+          'Full-year FCFF',
+          'FCFF after valuation date',
+          'Discount years',
           'PV of FCFF'
         ],
         ...dcfRun.result.forecast.map((row) => [
           'DCF forecast',
-          row.year,
+          row.label,
+          row.periodEnd,
           row.revenue,
           row.ebit,
           row.cashTaxes,
@@ -559,6 +565,8 @@ export function ValuationModelRunner({
           row.operatingWorkingCapital,
           row.changeWorkingCapital,
           row.fcff,
+          row.remainingFcff,
+          row.discountYears,
           row.pvFcff
         ]),
         [
@@ -776,26 +784,30 @@ export function ValuationModelRunner({
               <div key={field}>
                 <small>
                   {fields[field]} ·{' '}
-                  {model.annual[field]?.endDate || 'annual base missing'}
+                  {model.fiscal.annual[field]?.endDate || 'annual base missing'}
                 </small>
-                <strong>{format(model.annual[field]?.value)}</strong>
+                <strong>{format(model.fiscal.annual[field]?.value)}</strong>
                 <small>
-                  {model.annual[field]?.method ||
+                  {model.fiscal.annual[field]?.method ||
                     'Add an annual period or four consecutive quarters'}
                 </small>
               </div>
             ))}
           </div>
-          {model.annual.revenue ? (
+          {model.fiscal.annual.revenue ? (
             <p className={styles.notice}>
-              The historical base ends{' '}
-              {model.annual.revenue?.endDate || 'at an unresolved date'}. The
-              DCF carries this run rate to {context.valuationDate} and projects
-              five full rolling years. Review intervening events. Forward
-              consensus can supply RV earnings; it remains separate from the DCF
-              forecast and is not relabeled as NTM.
+              DCF historical base: FY{model.fiscal.fiscalYear} ended{' '}
+              {model.fiscal.endDate}. Forecasts follow the company fiscal years.
+              Cash flows before {context.valuationDate} are excluded; the
+              current FY’s cash flow is prorated by remaining days, assuming
+              uniform cash flow. Review seasonality before using the result.
             </p>
-          ) : null}
+          ) : (
+            <p className={styles.notice}>
+              DCF needs a completed company fiscal year. Upload an annual period
+              or all four reported quarters with a fiscal year-end label.
+            </p>
+          )}
         </>
       ) : (
         <p className={styles.caption}>
@@ -911,13 +923,16 @@ export function ValuationModelRunner({
         <>
           <h3 className={styles.modelHeading}>2. DCF assumptions</h3>
           <div className={styles.modelInputs}>
-            {input('baseRevenue', 'Annual / LTM revenue base')}
+            {input(
+              'baseRevenue',
+              `FY${model.fiscal.fiscalYear || ''} revenue base`
+            )}
             {input(
               'baseWorkingCapital',
-              'Base operating working capital',
-              model.workingCapital
+              'Fiscal-year closing operating working capital',
+              model.fiscal.workingCapital
                 ? 'Mapped operating WC.'
-                : model.tradeWorkingCapital
+                : model.fiscal.tradeWorkingCapital
                   ? 'Narrow trade proxy = receivables + inventory − payables. Review other operating balances before using.'
                   : 'Enter a reconciled balance; missing components are not zero.'
             )}
@@ -963,12 +978,13 @@ export function ValuationModelRunner({
           <div className={styles.tableWrap}>
             <table className={styles.reviewTable}>
               <caption>
-                Five rolling 12-month forecast periods from{' '}
-                {context.valuationDate}. All entries are percentages.
+                Company fiscal-year forecasts. All entries are percentages. The
+                current FY’s cash flow is prorated to the period after{' '}
+                {context.valuationDate}.
               </caption>
               <thead>
                 <tr>
-                  <th scope='col'>Year</th>
+                  <th scope='col'>Fiscal year / end date</th>
                   {[
                     'Revenue growth',
                     'EBIT margin',
@@ -986,14 +1002,20 @@ export function ValuationModelRunner({
               <tbody>
                 {settings.forecasts.map((row, index) => (
                   <tr key={index}>
-                    <th scope='row'>{index + 1}</th>
+                    <th scope='row'>
+                      {model.fiscal.periods[index]?.label || `FY ${index + 1}`}
+                      <small>
+                        {model.fiscal.periods[index]?.periodEnd ||
+                          'Fiscal year-end missing'}
+                      </small>
+                    </th>
                     {(Object.keys(row) as (keyof ForecastRow)[]).map(
                       (field) => (
                         <td key={field}>
                           <input
                             type='number'
                             step='any'
-                            aria-label={`Year ${index + 1} ${field} percent`}
+                            aria-label={`${model.fiscal.periods[index]?.label || `FY ${index + 1}`} ${field} percent`}
                             value={row[field]}
                             onChange={(event) =>
                               set(
@@ -1020,8 +1042,8 @@ export function ValuationModelRunner({
               checked={settings.dcfReview}
               onChange={(event) => set('dcfReview', event.target.checked)}
             />
-            I accept the historical carry-forward, working-capital definition
-            and forecast assumptions shown above.
+            I have reviewed the company fiscal years, remaining-year cash-flow
+            proration, working-capital definition and forecast assumptions.
           </label>
           <div className={styles.bottomActions}>
             <button
@@ -1795,7 +1817,7 @@ export function ValuationModelRunner({
               className={styles.modelResult}
               aria-labelledby='dcf-result-title'
             >
-              <h4 id='dcf-result-title'>DCF results</h4>
+              <h4 id='dcf-result-title'>DCF results · company fiscal years</h4>
               <div className={styles.modelFacts}>
                 <div>
                   <small>Value per share</small>
@@ -1825,20 +1847,23 @@ export function ValuationModelRunner({
               <div className={styles.tableWrap}>
                 <table className={styles.reviewTable}>
                   <caption>
-                    DCF forecast · full rolling years with end-period
-                    discounting
+                    DCF forecast · company fiscal years · fiscal year-end
+                    discounting. Annual figures are full-FY projections; only
+                    remaining FCFF is valued.
                   </caption>
                   <thead>
                     <tr>
                       {[
-                        'Year',
+                        'Fiscal year',
+                        'FY end',
                         'Revenue',
                         'EBIT',
                         'NOPAT',
                         'D&A',
                         'Capex',
                         'Δ operating WC',
-                        'FCFF',
+                        'Annual FCFF',
+                        'Remaining FCFF',
                         'PV FCFF'
                       ].map((label) => (
                         <th key={label} scope='col'>
@@ -1850,8 +1875,9 @@ export function ValuationModelRunner({
                   <tbody>
                     {dcfRun.result.forecast.map((row) => (
                       <tr key={row.year}>
+                        <th scope='row'>{row.label}</th>
+                        <td>{row.periodEnd}</td>
                         {[
-                          row.year,
                           row.revenue,
                           row.ebit,
                           row.nopat,
@@ -1859,11 +1885,10 @@ export function ValuationModelRunner({
                           row.capex,
                           row.changeWorkingCapital,
                           row.fcff,
+                          row.remainingFcff,
                           row.pvFcff
                         ].map((value, index) => (
-                          <td key={index}>
-                            {format(value, index === 0 ? 0 : 2)}
-                          </td>
+                          <td key={index}>{format(value)}</td>
                         ))}
                       </tr>
                     ))}

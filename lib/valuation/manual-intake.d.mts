@@ -34,6 +34,8 @@ export interface Observation {
   basis: string
   endDate: string
   months?: number
+  fiscalYear?: number
+  fiscalQuarter?: number
   classification: Classification
   currency: string
   unit: Unit
@@ -51,7 +53,13 @@ export interface NormalizedManual {
   value: number | null
   currency: string | null
   classification: string
-  period: { basis: string; endDate: string; months: number }
+  period: {
+    basis: string
+    endDate: string
+    months: number
+    fiscalYear?: number
+    fiscalQuarter?: number
+  }
   definition: string
   forwardPeriodConfirmation?: {
     originalBasis: string

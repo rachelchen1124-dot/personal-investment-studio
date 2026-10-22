@@ -8,7 +8,8 @@ import {
   type ModelDraft,
   rebuildIntake,
   recoverModelDraft,
-  saveIntakeDraft
+  saveIntakeDraft,
+  valuationModelKey
 } from '@/lib/valuation/intake-draft'
 import {
   cellAddress,
@@ -434,7 +435,13 @@ export function ValuationDataIntake() {
       current.map((observation) =>
         observation.fileId === selected.id &&
         observation.field === 'evEbitdaForward'
-          ? { ...observation, ...patch, forwardPeriodConfirmation: undefined }
+          ? {
+              ...observation,
+              ...patch,
+              forwardPeriodConfirmation: undefined,
+              fiscalYear: undefined,
+              fiscalQuarter: undefined
+            }
           : observation
       )
     )
@@ -727,6 +734,16 @@ export function ValuationDataIntake() {
             item.id === editor.id
               ? {
                   ...editor,
+                  fiscalYear:
+                    item.basis === editor.basis &&
+                    item.endDate === editor.endDate
+                      ? editor.fiscalYear
+                      : undefined,
+                  fiscalQuarter:
+                    item.basis === editor.basis &&
+                    item.endDate === editor.endDate
+                      ? editor.fiscalQuarter
+                      : undefined,
                   forwardPeriodConfirmation:
                     item.basis === editor.basis &&
                     item.endDate === editor.endDate
@@ -810,16 +827,10 @@ export function ValuationDataIntake() {
   const detectedCurrency = uploads.find((file) =>
     /^[A-Z]{3}$/.test(file.currency)
   )?.currency
-  const modelKey = JSON.stringify([
-    company,
-    issuerId,
-    valuationDate,
-    mode,
-    records.map((record) => ({
-      ...record,
-      issues: record.issues.filter((issue) => issue.code !== 'REVIEW_REQUIRED')
-    }))
-  ])
+  const modelKey = valuationModelKey(
+    { company, issuerId, valuationDate, mode },
+    records
+  )
   const rememberModelSettings = React.useCallback(
     (settings: RunSettings) => {
       if (stage !== 'model') return

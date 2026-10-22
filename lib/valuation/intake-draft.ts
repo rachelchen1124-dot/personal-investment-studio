@@ -1,4 +1,4 @@
-import type { Observation, Upload } from './manual-intake.mjs'
+import type { NormalizedManual, Observation, Upload } from './manual-intake.mjs'
 import type { IntakeContext, RunSettings } from './workflow.ts'
 import { proposeImport, restoreIntake } from './capital-iq.ts'
 
@@ -15,6 +15,28 @@ export type IntakeDraft = {
   model: ModelDraft | null
 }
 
+/** Adding fiscal labels does not discard saved assumptions for unchanged source data. */
+export function valuationModelKey(
+  context: IntakeContext,
+  records: NormalizedManual[]
+) {
+  return JSON.stringify([
+    context.company,
+    context.issuerId,
+    context.valuationDate,
+    context.mode,
+    records.map((record) => ({
+      ...record,
+      period: {
+        basis: record.period.basis,
+        endDate: record.period.endDate,
+        months: record.period.months
+      },
+      issues: record.issues.filter((issue) => issue.code !== 'REVIEW_REQUIRED')
+    }))
+  ])
+}
+
 /** Rebuild native mappings from original tables, including legacy packs without mappings. */
 export function rebuildIntake(raw: unknown) {
   const restored = restoreIntake(raw)
@@ -26,11 +48,32 @@ export function rebuildIntake(raw: unknown) {
       JSON.stringify([item.fileId, item.sheet, item.row, item.column])
     )
   )
+  const fiscalMetadata = new Map(
+    proposals
+      .flatMap((proposal) => proposal.observations)
+      .map((item) => [
+        JSON.stringify([item.fileId, item.sheet, item.row, item.column]),
+        item
+      ])
+  )
   return {
     context: restored.context,
     files: proposals.map((proposal) => proposal.file),
     observations: [
-      ...restored.observations,
+      ...restored.observations.map((item) => {
+        const native = fiscalMetadata.get(
+          JSON.stringify([item.fileId, item.sheet, item.row, item.column])
+        )
+        return native &&
+          item.basis === native.basis &&
+          item.endDate === native.endDate
+          ? {
+              ...item,
+              fiscalYear: item.fiscalYear ?? native.fiscalYear,
+              fiscalQuarter: item.fiscalQuarter ?? native.fiscalQuarter
+            }
+          : item
+      }),
       ...proposals
         .flatMap((proposal) => proposal.observations)
         .filter(

@@ -71,11 +71,6 @@ const serial = (date: string) => {
     (Date.parse(date + 'T00:00:00Z') - Date.UTC(1899, 11, 30)) / 86_400_000
   return Number.isFinite(value) ? value : null
 }
-const plusYears = (date: string, years: number) => {
-  const result = new Date(date + 'T00:00:00Z')
-  result.setUTCFullYear(result.getUTCFullYear() + years)
-  return result.toISOString().slice(0, 10)
-}
 function noteLines(value: string) {
   const lines: string[] = []
   for (const paragraph of value.replaceAll('\r', '').split('\n')) {
@@ -303,11 +298,18 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     fw.put(excelColumn(3 + index) + '5', serial(date), 'date')
 
   const ltmCol = excelColumn(4 + periods.length)
-  const ltmDate = model.annual.revenue?.endDate
-  fw.put(ltmCol + '5', 'Annual / latest', 'header')
+  fw.put(ltmCol + '5', 'Latest annual / LTM', 'header')
   const asOfCol = excelColumn(5 + periods.length)
   fw.put(asOfCol + '5', 'Period end', 'header')
-  financials.widths = [3, 3, 48, ...periods.map(() => 14), 3, 19, 16]
+  const fiscalCol = excelColumn(6 + periods.length)
+  fw.put(
+    fiscalCol + '5',
+    model.fiscal.fiscalYear
+      ? `FY${model.fiscal.fiscalYear} DCF base`
+      : 'Fiscal DCF base',
+    'header'
+  )
+  financials.widths = [3, 3, 48, ...periods.map(() => 14), 3, 19, 16, 24]
   financials.freezeRows = 5
   financials.freezeColumns = 3
   const historyRows: Record<string, number> = {}
@@ -433,8 +435,37 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     'Balance-sheet figures are point-in-time balances, not LTM flows. Trade WC proxy = receivables + inventory − payables.',
     'note'
   )
+  for (const [field, row] of Object.entries(historyRows)) {
+    const metric = model.fiscal.annual[field]
+    if (metric)
+      fw.formula(
+        fiscalCol + row,
+        metric.records.map(sourceRef).join('+'),
+        metric.value,
+        'linked'
+      )
+    else if (field === 'operatingWorkingCapital' && model.fiscal.workingCapital)
+      fw.formula(
+        fiscalCol + row,
+        sourceRef(model.fiscal.workingCapital),
+        model.fiscal.workingCapital.value,
+        'linked'
+      )
+    else if (
+      field === 'operatingWorkingCapital' &&
+      model.fiscal.tradeWorkingCapital
+    ) {
+      const [a, b, c] = model.fiscal.tradeWorkingCapital.records
+      fw.formula(
+        fiscalCol + row,
+        `${sourceRef(a!)}+${sourceRef(b!)}-${sourceRef(c!)}`,
+        model.fiscal.tradeWorkingCapital.value,
+        'linked'
+      )
+    } else fw.put(fiscalCol + row, 'n.a.', 'note')
+  }
   const historicalRef = (field: string) =>
-    `'Financials'!${ltmCol}${historyRows[field]}`
+    `'Financials'!${fiscalCol}${historyRows[field]}`
 
   if (dcfSheet) {
     const w = writer(dcfSheet)
@@ -446,7 +477,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     w.put(
       'C3',
       settings.currency +
-        ' millions. Forecasts cover full rolling years with end-period discounting.',
+        ' millions. Forecasts follow company fiscal years with fiscal year-end discounting.',
       'note'
     )
     w.put(
@@ -457,6 +488,14 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     )
     w.put('C5', 'Valuation date')
     w.put('E5', serial(context.valuationDate), 'date')
+    w.put('C6', 'Completed fiscal-year base ends')
+    w.put('E6', serial(model.fiscal.endDate), 'date')
+    w.put('C10', 'Fiscal year', 'header')
+    w.put(
+      'E10',
+      model.fiscal.fiscalYear ? `FY${model.fiscal.fiscalYear}` : 'Unresolved',
+      'header'
+    )
     w.put('C7', 'WACC')
     w.put(
       'E7',
@@ -488,12 +527,19 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     )
     w.put('C11', 'Operating assumptions', 'header')
     w.put('E11', 'Historical reference', 'header')
-    for (let index = 0; index < 5; index++)
+    for (let index = 0; index < 5; index++) {
+      const period = model.fiscal.periods[index]
+      w.put(
+        excelColumn(index + 5) + '10',
+        period?.label || 'Unresolved FY',
+        'header'
+      )
       w.put(
         excelColumn(index + 5) + '11',
-        serial(plusYears(context.valuationDate, index + 1)),
+        serial(period?.periodEnd || ''),
         'date'
       )
+    }
     const drivers = [
       ['Revenue growth', 'growth', null],
       ['EBIT margin', 'margin', 'ebit'],
@@ -508,17 +554,18 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       if (field) {
         const metric =
           field === 'operatingWorkingCapital'
-            ? (model.workingCapital?.value ?? model.tradeWorkingCapital?.value)
-            : model.annual[field]?.value
+            ? (model.fiscal.workingCapital?.value ??
+              model.fiscal.tradeWorkingCapital?.value)
+            : model.fiscal.annual[field]?.value
         const valid =
           metric !== undefined &&
-          !!model.annual.revenue?.value &&
+          !!model.fiscal.annual.revenue?.value &&
           (field === 'operatingWorkingCapital' ||
-            model.annual[field]?.endDate === ltmDate)
+            model.fiscal.annual[field]?.endDate === model.fiscal.endDate)
         w.formula(
           'E' + row,
           `IF(COUNT(${historicalRef(field)},${historicalRef('revenue')})<2,"n.a.",IF(${historicalRef('revenue')}=0,"n.a.",${historicalRef(field)}/${historicalRef('revenue')}))`,
-          valid ? metric! / model.annual.revenue!.value : 'n.a.',
+          valid ? metric! / model.fiscal.annual.revenue!.value : 'n.a.',
           'linkedPercent'
         )
       } else w.put('E' + row, 'n.a.', 'note')
@@ -541,10 +588,12 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       27: 'Less: capital expenditure',
       28: 'Operating working capital',
       29: 'Change in operating working capital',
-      30: 'Free cash flow to the firm',
+      30: 'Full fiscal-year FCFF',
+      31: 'Fraction of fiscal-year cash flow remaining',
       32: 'Discount period',
       33: 'Discount factor',
-      34: 'Present value of FCFF'
+      34: 'Present value of remaining FCFF',
+      35: 'FCFF after valuation date'
     }
     for (const [row, label] of Object.entries(labels))
       w.put(
@@ -552,8 +601,26 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         label,
         [20, 25, 30, 34].includes(Number(row)) ? 'total' : 'text'
       )
-    w.put('E20', number(settings.baseRevenue), 'input')
-    w.put('E28', number(settings.baseWorkingCapital), 'input')
+    if (number(settings.baseRevenue) === model.fiscal.annual.revenue?.value)
+      w.formula(
+        'E20',
+        historicalRef('revenue'),
+        number(settings.baseRevenue),
+        'linked'
+      )
+    else w.put('E20', number(settings.baseRevenue), 'input')
+    if (
+      number(settings.baseWorkingCapital) ===
+      (model.fiscal.workingCapital?.value ??
+        model.fiscal.tradeWorkingCapital?.value)
+    )
+      w.formula(
+        'E28',
+        historicalRef('operatingWorkingCapital'),
+        number(settings.baseWorkingCapital),
+        'linked'
+      )
+    else w.put('E28', number(settings.baseWorkingCapital), 'input')
     for (const [row, field] of [
       [22, 'ebit'],
       [26, 'da'],
@@ -562,7 +629,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       w.formula(
         'E' + row,
         historicalRef(field),
-        model.annual[field]?.value ?? 'n.a.',
+        model.fiscal.annual[field]?.value ?? 'n.a.',
         'linked'
       )
     w.put('E32', 0, 'number')
@@ -628,7 +695,34 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         (a, b, c, d) => a + b - c - d,
         'total'
       )
-      w.formula(col + '32', `${prior}32+1`, year + 1)
+      const priorDate = year ? prior + '11' : 'E6'
+      w.calc(
+        col + '31',
+        `IF(${col}11<=${priorDate},"n.a.",MAX(0,MIN(1,(${col}11-MAX($E$5,${priorDate}))/(${col}11-${priorDate}))))`,
+        [col + '11', priorDate, 'E5'],
+        (end, start, valueDate) =>
+          end > start
+            ? Math.max(
+                0,
+                Math.min(1, (end - Math.max(start, valueDate)) / (end - start))
+              )
+            : Number.NaN,
+        'percent'
+      )
+      w.calc(
+        col + '32',
+        `IF(${col}11<=$E$5,0,IF(${priorDate}>=$E$5,${prior}32+1,${col}31))`,
+        [col + '11', 'E5', priorDate, prior + '32', col + '31'],
+        (end, valueDate, start, previous, fraction) =>
+          end <= valueDate ? 0 : start >= valueDate ? previous + 1 : fraction
+      )
+      w.calc(
+        col + '35',
+        `${col}30*${col}31`,
+        [col + '30', col + '31'],
+        (cashFlow, fraction) => cashFlow * fraction,
+        'total'
+      )
       w.calc(
         col + '33',
         `1/(1+$E$7)^${col}32`,
@@ -638,8 +732,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       )
       w.calc(
         col + '34',
-        `${col}30*${col}33`,
-        [col + '30', col + '33'],
+        `${col}35*${col}33`,
+        [col + '35', col + '33'],
         (a, b) => a * b,
         'total'
       )
@@ -814,11 +908,14 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
           const pv = Array.from(
             { length: 5 },
             (_, i) =>
-              Number(w.get(excelColumn(i + 5) + '30')) / (1 + wc) ** (i + 1)
+              Number(w.get(excelColumn(i + 5) + '35')) /
+              (1 + wc) ** Number(w.get(excelColumn(i + 5) + '32'))
           ).reduce((a, b) => a + b, 0)
           value =
             (pv +
-              (nopat * (1 - gr / roic)) / (wc - gr) / (1 + wc) ** 5 +
+              (nopat * (1 - gr / roic)) /
+                (wc - gr) /
+                (1 + wc) ** Number(w.get('J32')) +
               Number(w.get('E51')) +
               Number(w.get('E52')) -
               Number(w.get('E53')) -
@@ -833,12 +930,12 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     w.section(78, 'Model basis and analyst notes')
     w.put(
       'C79',
-      `Reported revenue base ends ${ltmDate || 'at an unresolved date'} and is carried to the valuation date.`,
+      `Completed fiscal-year revenue base ends ${model.fiscal.endDate || 'at an unresolved date'}. Forecasts retain the company fiscal-year calendar.`,
       'note'
     )
     w.put(
       'C80',
-      'No mid-year or fiscal stub discounting. Negative EBIT receives no immediate tax credit; NOLs require a separate schedule.',
+      'Current-FY cash flow is prorated by remaining fiscal-year days, assuming uniform cash flow. Completed-year cash flows are excluded. Discounting uses fiscal year ends; mid-year timing is not applied.',
       'note'
     )
     w.put(
@@ -848,7 +945,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     )
     w.put(
       'C82',
-      'Terminal ROIC applies to terminal reinvestment. Years 1–5 reinvestment follows capex, D&A and working capital inputs.',
+      'Terminal ROIC applies to terminal reinvestment after the final fiscal year. Forecast reinvestment follows capex, D&A and working capital inputs; losses receive no immediate tax credit.',
       'note'
     )
     for (const [index, line] of noteLines(
@@ -862,7 +959,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     w.put('C2', 'Forward estimates and RV earnings', 'title')
     w.put(
       'C3',
-      'Selected forward earnings feed Comps through formulas. FY, CY and NTM stay distinct. These estimates do not overwrite the separate rolling DCF assumptions.',
+      'Selected forward earnings feed Comps through formulas. FY, CY and NTM stay distinct. These estimates do not overwrite the separate fiscal-year DCF assumptions.',
       'note'
     )
     const dates = [
@@ -1252,7 +1349,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       w.formula(
         excelColumn(year + 5) + row,
         `'DCF'!${excelColumn(year + 5)}11`,
-        serial(plusYears(context.valuationDate, year + 1)),
+        serial(model.fiscal.periods[year]?.periodEnd || ''),
         'date'
       )
     row++
@@ -1262,7 +1359,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       ['NOPAT', 25],
       ['Capex', 27],
       ['Change in operating WC', 29],
-      ['FCFF', 30]
+      ['Full fiscal-year FCFF', 30],
+      ['FCFF after valuation date', 35]
     ] as [string, number][]) {
       w.put('C' + row, label)
       for (let year = 0; year < 5; year++) {

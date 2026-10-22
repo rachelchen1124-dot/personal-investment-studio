@@ -11,6 +11,7 @@ import {
   type Peer,
   type Source
 } from './engine.ts'
+import { fiscalDate, fiscalDcfPeriods } from './fiscal-periods.ts'
 import { ntmPeriodEnd } from './forward-period.ts'
 import { type NormalizedManual, validDate } from './manual-intake.mjs'
 
@@ -36,6 +37,7 @@ export type ForecastRow = {
 }
 export type RunSettings = {
   forwardMultipleBasisVersion: 1
+  dcfBasisVersion: 1
   forwardMultiplePeriods: ForwardMultiplePeriods
   currency: string
   debt: string
@@ -417,6 +419,162 @@ function annualMetric(
   return undefined
 }
 
+function fiscalHistory(records: NormalizedManual[], context: IntakeContext) {
+  const target = records.filter((record) =>
+    sameIssuer(record.issuerId, context.issuerId)
+  )
+  const historical = target.filter(
+    (record) =>
+      ['historicals', 'capital'].includes(record.source.section) &&
+      record.classification === 'reported' &&
+      available(record, context.valuationDate)
+  )
+  const anchors = historical.filter(
+    (record) =>
+      record.field === 'revenue' &&
+      ((record.period.basis === 'FY' && record.period.months === 12) ||
+        record.period.fiscalQuarter === 4)
+  )
+  const latest = anchors
+    .map((record) => record.period.endDate)
+    .toSorted()
+    .at(-1)
+  const anchor = anchors.find((record) => record.period.endDate === latest)
+  let endDate = anchor?.period.endDate || ''
+  let fiscalYear =
+    anchor?.period.fiscalYear ??
+    (endDate ? Number(endDate.slice(0, 4)) : undefined)
+  if (!endDate) {
+    // An explicitly labeled fiscal estimate can identify year-end even when
+    // historical files have only quarters; it does not supply historical values.
+    const knownFiscal = target.filter(
+      (record) =>
+        record.period.basis === 'FY' &&
+        record.period.months === 12 &&
+        available(record, context.valuationDate)
+    )
+    const futureEnd = knownFiscal
+      .map((record) => record.period.endDate)
+      .filter((date) => date > context.valuationDate)
+      .toSorted()[0]
+    const lastEnd = knownFiscal
+      .map((record) => record.period.endDate)
+      .toSorted()
+      .at(-1)
+    const fiscal = knownFiscal.find(
+      (record) => record.period.endDate === (futureEnd || lastEnd)
+    )
+    if (fiscal) {
+      endDate = fiscal.period.endDate
+      fiscalYear = fiscal.period.fiscalYear ?? Number(endDate.slice(0, 4))
+      while (endDate > context.valuationDate) {
+        endDate = fiscalDate(endDate, -1)
+        fiscalYear--
+      }
+    }
+  }
+  const annual = Object.fromEntries(
+    ['revenue', 'ebit', 'ebitda', 'netIncome', 'da', 'capex'].map((field) => {
+      const direct = historical.filter(
+        (record) =>
+          record.field === field &&
+          record.period.basis === 'FY' &&
+          record.period.months === 12 &&
+          record.period.endDate === endDate
+      )
+      const selected = one(direct)
+      const metric = direct.length
+        ? selected
+          ? {
+              value: selected.value!,
+              endDate,
+              records: [selected],
+              method: 'Reported fiscal year'
+            }
+          : undefined
+        : annualMetric(
+            historical.filter(
+              (record) =>
+                record.period.basis === 'QTR' &&
+                record.period.endDate <= endDate
+            ),
+            field,
+            context.valuationDate
+          )
+      return [
+        field,
+        metric?.endDate === endDate
+          ? {
+              ...metric,
+              method: direct.length
+                ? 'Reported fiscal year'
+                : 'Sum of four reported quarters in this fiscal year'
+            }
+          : undefined
+      ]
+    })
+  ) as Record<string, AnnualMetric | undefined>
+  const point = (field: string) =>
+    one(
+      historical.filter(
+        (record) =>
+          record.field === field &&
+          record.period.basis === 'instant' &&
+          record.period.endDate === endDate
+      )
+    )
+  const workingCapital = point('operatingWorkingCapital')
+  const trade = ['accountsReceivable', 'inventory', 'accountsPayable'].map(
+    point
+  )
+  const tradeWorkingCapital = trade.every(Boolean)
+    ? {
+        value: trade[0]!.value! + trade[1]!.value! - trade[2]!.value!,
+        endDate,
+        records: trade as NormalizedManual[]
+      }
+    : undefined
+  const supplied = Array.from({ length: 5 }, (_, index) => {
+    const year = (fiscalYear ?? 0) + index + 1
+    const dates = [
+      ...new Set(
+        target
+          .filter(
+            (record) =>
+              record.period.basis === 'FY' &&
+              record.period.fiscalYear === year &&
+              available(record, context.valuationDate)
+          )
+          .map((record) => record.period.endDate)
+      )
+    ]
+    return dates.length === 1 ? { periodEnd: dates[0], fiscalYear: year } : {}
+  })
+  let periods: ReturnType<typeof fiscalDcfPeriods> = [],
+    error = ''
+  try {
+    periods = fiscalDcfPeriods(
+      context.valuationDate,
+      endDate,
+      5,
+      fiscalYear,
+      supplied
+    )
+  } catch (err) {
+    error =
+      err instanceof Error ? err.message : 'Confirm the fiscal-year calendar.'
+  }
+  return {
+    endDate,
+    fiscalYear,
+    annual,
+    workingCapital,
+    tradeWorkingCapital,
+    periods,
+    error
+  }
+}
+
 export function prepareModel(
   inputRecords: NormalizedManual[],
   context: IntakeContext,
@@ -556,6 +714,7 @@ export function prepareModel(
   return {
     context,
     records,
+    fiscal: fiscalHistory(records, context),
     inputDiagnostics,
     annual,
     capital,
@@ -582,16 +741,21 @@ export function initialSettings(
     record?.value === undefined || record.value === null
       ? ''
       : String(record.value)
-  const revenue = model.annual.revenue?.value
+  const revenue = model.fiscal.annual.revenue?.value
   const ratio = (field: string) => {
-    const metric = model.annual[field]
-    return revenue && metric && metric.endDate === model.annual.revenue?.endDate
+    const metric = model.fiscal.annual[field]
+    return revenue &&
+      metric &&
+      metric.endDate === model.fiscal.annual.revenue?.endDate
       ? String(Number(((metric.value / revenue) * 100).toFixed(4)))
       : ''
   }
-  const wc = model.workingCapital?.value ?? model.tradeWorkingCapital?.value
+  const wc =
+    model.fiscal.workingCapital?.value ??
+    model.fiscal.tradeWorkingCapital?.value
   return {
     forwardMultipleBasisVersion: 1,
+    dcfBasisVersion: 1,
     forwardMultiplePeriods: {},
     currency: model.currency,
     debt: value(model.capital.debt),
@@ -663,7 +827,42 @@ export function restoreRunSettings(
       settings.peerProfileReview = false
     }
   }
-  return { ...settings, forwardMultipleBasisVersion: 1 }
+  if (saved && saved.dcfBasisVersion !== 1) {
+    const defaults = initialSettings(model)
+    const legacyRevenue = model.annual.revenue?.value
+    const legacyWc =
+      model.workingCapital?.value ?? model.tradeWorkingCapital?.value
+    if (
+      !saved.baseRevenue.trim() ||
+      Number(saved.baseRevenue) === legacyRevenue
+    )
+      settings.baseRevenue = defaults.baseRevenue
+    if (
+      !saved.baseWorkingCapital.trim() ||
+      Number(saved.baseWorkingCapital) === legacyWc
+    )
+      settings.baseWorkingCapital = defaults.baseWorkingCapital
+    settings.forecasts = saved.forecasts.map((row, index) => ({
+      ...row,
+      ...Object.fromEntries(
+        (['margin', 'da', 'capex', 'wc'] as const)
+          .filter((key) => {
+            const value =
+              key === 'wc'
+                ? legacyWc
+                : model.annual[key === 'margin' ? 'ebit' : key]?.value
+            const legacy =
+              legacyRevenue && value !== undefined
+                ? Number(((value / legacyRevenue) * 100).toFixed(4))
+                : undefined
+            return !row[key].trim() || Number(row[key]) === legacy
+          })
+          .map((key) => [key, defaults.forecasts[index]![key]])
+      )
+    }))
+    settings.dcfReview = false
+  }
+  return { ...settings, forwardMultipleBasisVersion: 1, dcfBasisVersion: 1 }
 }
 
 export function fillValuationDefaults(settings: RunSettings): RunSettings {
@@ -799,15 +998,17 @@ export function executeDcf(
   const base = shared(records, context, settings)
   requireValue(
     settings.dcfReview,
-    'Confirm the DCF run-rate, working-capital definition and forecast assumptions.'
+    'Confirm the fiscal-year forecast, remaining-year cash-flow proration and working-capital assumptions.'
   )
   const model = prepareModel(records, context)
   requireValue(
-    model.annual.revenue,
-    'DCF requires a reported annual/LTM revenue value or four consecutive quarterly revenue observations. Map annual revenue before running.'
+    model.fiscal.annual.revenue,
+    'DCF requires a completed company fiscal year: upload annual revenue or four consecutive reported quarters ending at the company fiscal year-end. LTM and NTM are not substituted.'
   )
   checkUsed(
-    Object.values(model.annual).flatMap((metric) => metric?.records || []),
+    Object.values(model.fiscal.annual).flatMap(
+      (metric) => metric?.records || []
+    ),
     settings.currency
   )
   checkUsed(
@@ -815,11 +1016,12 @@ export function executeDcf(
     settings.currency
   )
   checkUsed(
-    model.workingCapital
-      ? [model.workingCapital]
-      : model.tradeWorkingCapital?.records || [],
+    model.fiscal.workingCapital
+      ? [model.fiscal.workingCapital]
+      : model.fiscal.tradeWorkingCapital?.records || [],
     settings.currency
   )
+  requireValue(!model.fiscal.error, model.fiscal.error)
   const pct = (raw: string, name: string) => {
     const observation = base.assumption(raw, name)
     return { ...observation, value: observation.value / 100 }
@@ -829,9 +1031,11 @@ export function executeDcf(
     sources: base.sources,
     capitalization: base.capitalization,
     base: {
+      periodEnd: model.fiscal.endDate,
+      fiscalYear: model.fiscal.fiscalYear,
       revenue: base.assumption(
         settings.baseRevenue,
-        'Annual revenue base',
+        'Fiscal-year revenue base',
         true
       ),
       operatingWorkingCapital: base.assumption(
@@ -839,8 +1043,10 @@ export function executeDcf(
         'Base operating working capital'
       )
     },
-    timing: 'rolling-annual-end-period',
+    timing: 'fiscal-year-end',
     forecast: settings.forecasts.map((row, index) => ({
+      periodEnd: model.fiscal.periods[index]!.periodEnd,
+      fiscalYear: model.fiscal.periods[index]!.fiscalYear,
       revenueGrowth: pct(row.growth, `Year ${index + 1} revenue growth`),
       ebitMargin: pct(row.margin, `Year ${index + 1} EBIT margin`),
       cashTaxRate: pct(row.tax, `Year ${index + 1} cash tax rate`),
@@ -867,7 +1073,7 @@ export function executeDcf(
     input,
     result,
     sensitivity,
-    basePeriod: model.annual.revenue.endDate,
+    basePeriod: model.fiscal.annual.revenue.endDate,
     audit: records
   }
 }
