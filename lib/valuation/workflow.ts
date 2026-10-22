@@ -34,6 +34,7 @@ export type ForecastRow = {
   wc: string
 }
 export type RunSettings = {
+  forwardMultiplePeriods: ForwardMultiplePeriods
   currency: string
   debt: string
   cash: string
@@ -59,6 +60,62 @@ export type RunSettings = {
   targetMultiple: string
   targetMultipleRationale: string
   peerSelections: Record<string, PeerSelection>
+}
+export type ForwardMultiplePeriods = Record<
+  string,
+  {
+    basis: 'FY' | 'CY' | 'NTM'
+    endDate: string
+  }
+>
+
+/** Resolve missing ratio metadata only after the user confirms a file's period.
+ * The uploaded multiple and its source locator/value remain unchanged. */
+export function confirmForwardMultiplePeriods(
+  records: NormalizedManual[],
+  confirmations: ForwardMultiplePeriods = {}
+) {
+  return records.map((record) => {
+    if (record.field !== 'evEbitdaForward') return record
+    const entry = Object.entries(confirmations).find(
+      ([fileId]) => fileId && record.source.id.startsWith(`manual:${fileId}:`)
+    )
+    const confirmed = entry?.[1]
+    if (
+      !confirmed ||
+      !['FY', 'CY', 'NTM'].includes(confirmed.basis) ||
+      !validDate(confirmed.endDate)
+    )
+      return record
+    const originalBasis =
+      record.forwardPeriodConfirmation?.originalBasis ?? record.period.basis
+    const originalEndDate =
+      record.forwardPeriodConfirmation?.originalEndDate ?? record.period.endDate
+    // A known source period always wins, including a conflicting FY or NTM label.
+    if (
+      (originalBasis && originalBasis !== confirmed.basis) ||
+      (originalEndDate && originalEndDate !== confirmed.endDate) ||
+      (originalBasis && originalEndDate)
+    )
+      return record
+    return {
+      ...record,
+      period: {
+        basis: confirmed.basis,
+        endDate: confirmed.endDate,
+        months: 12
+      },
+      forwardPeriodConfirmation: {
+        originalBasis,
+        originalEndDate,
+        note: `User confirmed that the uploaded SP_TEV_EBITDA_FWD column covers ${confirmed.basis} ending ${confirmed.endDate}. Source period was ${originalBasis || 'unspecified'} ${originalEndDate || '(end date unavailable)'}. Uploaded multiple used unchanged; no earnings estimate was calculated.`
+      },
+      issues: record.issues.filter(
+        (issue) =>
+          !['PERIOD_END_REQUIRED', 'PERIOD_BASIS_REQUIRED'].includes(issue.code)
+      )
+    }
+  })
 }
 const monetaryShareFields = new Set([
   'basicShares',
@@ -196,9 +253,14 @@ function annualMetric(
 }
 
 export function prepareModel(
-  records: NormalizedManual[],
-  context: IntakeContext
+  inputRecords: NormalizedManual[],
+  context: IntakeContext,
+  forwardMultiplePeriods: ForwardMultiplePeriods = {}
 ) {
+  const records = confirmForwardMultiplePeriods(
+    inputRecords,
+    forwardMultiplePeriods
+  )
   const target = records.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
   )
@@ -326,6 +388,7 @@ export function prepareModel(
   }
   return {
     context,
+    records,
     inputDiagnostics,
     annual,
     capital,
@@ -361,6 +424,7 @@ export function initialSettings(
   }
   const wc = model.workingCapital?.value ?? model.tradeWorkingCapital?.value
   return {
+    forwardMultiplePeriods: {},
     currency: model.currency,
     debt: value(model.capital.debt),
     cash: value(model.capital.cash),
@@ -740,28 +804,29 @@ export function peerPreview(
           (issue) => issue.code !== 'REVIEW_REQUIRED'
         )
         const reason =
-          blocking?.message ||
-          (!['FY', 'CY', 'NTM'].includes(suppliedMultiple.period.basis) ||
+          !['FY', 'CY', 'NTM'].includes(suppliedMultiple.period.basis) ||
           !validDate(suppliedMultiple.period.endDate)
-            ? 'Uploaded forward multiple found. Confirm its FY, CY or NTM basis and period end in Map and confirm.'
-            : suppliedMultiple.source.asOf !== model.context.valuationDate
-              ? `Multiple snapshot ${suppliedMultiple.source.asOf} does not match valuation date ${model.context.valuationDate}`
-              : suppliedMultiple.classification !== 'consensus'
-                ? 'Confirm this forward multiple as a consensus estimate in Map and confirm.'
-                : !target
-                  ? 'Upload target EBITDA for the same forward period to calculate a target value.'
-                  : target.value! <= 0
-                    ? 'N/M: the target earnings value is not positive'
-                    : suppliedMultiple.value === null ||
-                        suppliedMultiple.value <= 0
-                      ? 'N/M: nonpositive or unavailable uploaded multiple'
-                      : suppliedMultiple.period.basis !== target.period.basis ||
-                          suppliedMultiple.period.endDate !==
-                            target.period.endDate
-                        ? `Uploaded multiple period ${suppliedMultiple.period.basis} ${suppliedMultiple.period.endDate} differs from target ${target.period.basis} ${target.period.endDate}`
-                        : suppliedMultiple.definition !== target.definition
-                          ? 'Accounting definitions differ'
-                          : '')
+            ? 'SP_TEV_EBITDA_FWD value imported. Confirm its period end using the uploaded-multiple controls above.'
+            : blocking?.message ||
+              (suppliedMultiple.source.asOf !== model.context.valuationDate
+                ? `Multiple snapshot ${suppliedMultiple.source.asOf} does not match valuation date ${model.context.valuationDate}`
+                : suppliedMultiple.classification !== 'consensus'
+                  ? 'Confirm this forward multiple as a consensus estimate in Map and confirm.'
+                  : !target
+                    ? 'Upload target EBITDA for the same forward period to calculate a target value.'
+                    : target.value! <= 0
+                      ? 'N/M: the target earnings value is not positive'
+                      : suppliedMultiple.value === null ||
+                          suppliedMultiple.value <= 0
+                        ? 'N/M: nonpositive or unavailable uploaded multiple'
+                        : suppliedMultiple.period.basis !==
+                              target.period.basis ||
+                            suppliedMultiple.period.endDate !==
+                              target.period.endDate
+                          ? `Uploaded multiple period ${suppliedMultiple.period.basis} ${suppliedMultiple.period.endDate} differs from target ${target.period.basis} ${target.period.endDate}`
+                          : suppliedMultiple.definition !== target.definition
+                            ? 'Accounting definitions differ'
+                            : '')
         return {
           issuerId,
           metric,
@@ -922,12 +987,12 @@ export function executeRelative(
   context: IntakeContext,
   settings: RunSettings
 ) {
-  const base = shared(records, context, settings)
+  const model = prepareModel(records, context, settings.forwardMultiplePeriods)
+  const base = shared(model.records, context, settings)
   requireValue(
     settings.peerProfileReview,
     'Confirm the peer export currency, mixed-unit profile and saved snapshot date.'
   )
-  const model = prepareModel(records, context)
   const preview = peerPreview(model, settings.multiple, settings.relativePeriod)
   requireValue(
     preview.target,

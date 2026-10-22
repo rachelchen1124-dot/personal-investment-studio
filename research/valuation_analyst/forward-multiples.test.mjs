@@ -10,10 +10,12 @@ import {
 } from '../../lib/valuation/write-workbook.ts'
 import {
   executeRelative,
+  confirmForwardMultiplePeriods,
   initialSettings,
   peerPreview,
   prepareModel
 } from '../../lib/valuation/workflow.ts'
+import { recoverModelDraft } from '../../lib/valuation/intake-draft.ts'
 
 const context = {
   company: 'Synthetic forward-ratio QA',
@@ -386,4 +388,157 @@ test('intake backups retain raw precomputed ratios and validated period mappings
     [9, 10, 11]
   )
   assert.ok(values.every((r) => !r.issues.length))
+})
+
+test('SP_TEV_EBITDA_FWD is imported when it is the last column, even with an unavailable period label', () => {
+  const input = file('Last column', [
+    ['SP_ENTITY_NAME', 'SP_ENTITY_ID', 'IQ_TEV', 'SP_TEV_EBITDA_FWD'],
+    ['', '', '', '#PEND'],
+    ['Synthetic peer (NYSE:PEER1)', '1', '9999', '9.7x']
+  ])
+  const ratio = normalize(input).find(
+    (record) => record.field === 'evEbitdaForward'
+  )
+  assert.equal(ratio.value, 9.7)
+  assert.match(ratio.source.locator, /!D3$/)
+  assert.equal(ratio.period.endDate, '')
+})
+
+test('one file-level period confirmation enables direct-ratio valuation without changing uploaded inputs', () => {
+  const values = [...normalize(peers('#PEND')), ...normalize(target())]
+  const original = structuredClone(values)
+  const settings = settingsFor(values)
+  assert.throws(
+    () => executeRelative(values, context, settings),
+    /Selected peers/
+  )
+  settings.forwardMultiplePeriods = {
+    'Peer multiples': { basis: 'NTM', endDate: '2027-10-22' }
+  }
+  const model = prepareModel(values, context, settings.forwardMultiplePeriods)
+  assert.equal(
+    peerPreview(model, 'EV/EBITDA').periodChoices[0].eligiblePeers,
+    3
+  )
+  const run = executeRelative(values, context, settings)
+  assert.equal(run.result.median.multiple, 10)
+  assert.equal(run.result.median.valuePerShare, 10.2)
+  assert.ok(
+    run.input.peers.every(
+      (peer) => peer.providedMultiple && !peer.metric && !peer.enterpriseValue
+    )
+  )
+  assert.ok(
+    run.audit
+      .filter((record) => record.field === 'evEbitdaForward')
+      .every((record) =>
+        /User confirmed.*NTM.*2027-10-22/.test(
+          record.forwardPeriodConfirmation.note
+        )
+      )
+  )
+  assert.deepEqual(values, original)
+  assert.deepEqual(
+    model.records
+      .filter((record) => record.field === 'evEbitdaForward')
+      .map((record) => record.value),
+    [9, 10, 11]
+  )
+  assert.deepEqual(
+    confirmForwardMultiplePeriods(
+      model.records,
+      settings.forwardMultiplePeriods
+    ),
+    model.records
+  )
+})
+
+test('period confirmations do not replace known conflicting dates, convert FY into NTM, or affect other files', () => {
+  const known = [
+    ...normalize(peers('FY2027 2027-12-31')),
+    ...normalize(target())
+  ]
+  const confirmation = {
+    'Peer multiples': { basis: 'NTM', endDate: '2027-10-22' }
+  }
+  assert.deepEqual(confirmForwardMultiplePeriods(known, confirmation), known)
+  const partial = normalize(peers('FY+1'))
+  assert.deepEqual(
+    confirmForwardMultiplePeriods(partial, confirmation),
+    partial
+  )
+  const unknown = normalize(peers('#PEND'))
+  assert.deepEqual(
+    confirmForwardMultiplePeriods(unknown, {
+      'Different file': confirmation['Peer multiples']
+    }),
+    unknown
+  )
+  assert.deepEqual(
+    confirmForwardMultiplePeriods(unknown, {
+      'Peer multiples': { basis: 'NTM', endDate: 'not a date' }
+    }),
+    unknown
+  )
+})
+
+test('confirming missing period metadata retains future-vintage and source-value blockers', () => {
+  const input = peers('#PEND')
+  input.availableAt = '2026-10-23'
+  const values = [...normalize(input), ...normalize(target())]
+  const settings = settingsFor(values)
+  settings.forwardMultiplePeriods = {
+    'Peer multiples': { basis: 'NTM', endDate: '2027-10-22' }
+  }
+  const model = prepareModel(values, context, settings.forwardMultiplePeriods)
+  assert.ok(
+    model.records
+      .filter((record) => record.field === 'evEbitdaForward')
+      .every((record) =>
+        record.issues.some((issue) => issue.code === 'FUTURE_VINTAGE')
+      )
+  )
+  assert.throws(
+    () => executeRelative(values, context, settings),
+    /Selected peers/
+  )
+})
+
+test('Excel retains period-confirmation provenance and links the original uploaded ratios', () => {
+  const values = [...normalize(peers('#PEND')), ...normalize(target())]
+  const settings = settingsFor(values)
+  settings.forwardMultiplePeriods = {
+    'Peer multiples': { basis: 'NTM', endDate: '2027-10-22' }
+  }
+  const relative = executeRelative(values, context, settings)
+  const book = buildValuationWorkbook({
+    records: values,
+    context,
+    settings,
+    relative
+  })
+  const comps = book.sheets.find((sheet) => sheet.name === 'Comps')
+  assert.match(
+    comps.cells.find((cell) => cell.address === 'F6').formula,
+    /^'Sources'!E/
+  )
+  assert.equal(comps.cells.find((cell) => cell.address === 'F6').value, 9)
+  assert.ok(
+    book.sheets
+      .find((sheet) => sheet.name === 'Sources')
+      .cells.some(
+        (cell) =>
+          typeof cell.value === 'string' &&
+          cell.value.includes('Source period was unspecified')
+      )
+  )
+  const restored = recoverModelDraft({
+    signature: 'same source inputs',
+    settings
+  })
+  assert.deepEqual(
+    restored.settings.forwardMultiplePeriods,
+    settings.forwardMultiplePeriods
+  )
+  assert.equal(restored.settings.peerProfileReview, false)
 })

@@ -151,8 +151,13 @@ function writer(target: ExcelSheet) {
 
 /** One sheet owns each calculation. Formulas and cached values use the same inputs as the UI. */
 export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
-  const { records, context, settings, dcf, relative } = input
-  const model = prepareModel(records, context)
+  const { context, settings, dcf, relative } = input
+  const model = prepareModel(
+    input.records,
+    context,
+    settings.forwardMultiplePeriods
+  )
+  const records = model.records
   const summary = sheet('Valuation')
   const dcfSheet =
     context.mode !== 'rv' && (dcf || !relative) ? sheet('DCF') : null
@@ -197,7 +202,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     'Original unit',
     'Definition',
     'Input issues',
-    'File SHA-256'
+    'File SHA-256',
+    'Forward multiple period confirmation'
   ]
   for (const [col, label] of sourceHeaders.entries())
     sw.put(excelColumn(col + 2) + '5', label, 'header')
@@ -219,7 +225,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       record.source.originalUnit,
       record.definition,
       record.issues.map((issue) => issue.message).join(' '),
-      record.source.fileSha256
+      record.source.fileSha256,
+      record.forwardPeriodConfirmation?.note || ''
     ]
     for (const [col, value] of values.entries())
       sw.put(

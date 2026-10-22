@@ -101,13 +101,21 @@ export function recoverModelDraft(raw: unknown): ModelDraft | null {
         !selection ||
         typeof selection.included !== 'boolean' ||
         typeof selection.rationale !== 'string'
-    )
+    ) ||
+    (settings.forwardMultiplePeriods &&
+      Object.values(settings.forwardMultiplePeriods).some(
+        (period) =>
+          !period ||
+          !['FY', 'CY', 'NTM'].includes(period.basis) ||
+          typeof period.endDate !== 'string'
+      ))
   )
     return null
   return {
     signature: candidate.signature,
     settings: {
       ...settings,
+      forwardMultiplePeriods: settings.forwardMultiplePeriods || {},
       sourceReview: false,
       capitalReview: false,
       dcfReview: false,

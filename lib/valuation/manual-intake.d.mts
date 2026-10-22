@@ -1,7 +1,16 @@
 export type SectionId = 'historicals' | 'capital' | 'peers' | 'forward'
 export type Unit = '' | 'units' | 'thousands' | 'millions' | 'billions'
-export type Classification = '' | 'reported' | 'consensus' | 'market' | 'analyst'
-export type Sheet = { name: string; rows: string[][]; cachedFormulaCells?: string[] }
+export type Classification =
+  | ''
+  | 'reported'
+  | 'consensus'
+  | 'market'
+  | 'analyst'
+export type Sheet = {
+  name: string
+  rows: string[][]
+  cachedFormulaCells?: string[]
+}
 export type Upload = {
   id: string
   name: string
@@ -43,6 +52,11 @@ export type NormalizedManual = {
   classification: string
   period: { basis: string; endDate: string; months: number }
   definition: string
+  forwardPeriodConfirmation?: {
+    originalBasis: string
+    originalEndDate: string
+    note: string
+  }
   source: {
     id: string
     provider: string
@@ -73,7 +87,10 @@ export function validDate(value: unknown): boolean
 export function parseDelimited(text: string): string[][]
 export function cellAddress(row: number, column: number): string
 export function templateCsv(category: SectionId): string
-export function mapTemplate(sheet: Sheet, headerRow?: number): Omit<Observation, 'id' | 'fileId'>[]
+export function mapTemplate(
+  sheet: Sheet,
+  headerRow?: number
+): Omit<Observation, 'id' | 'fileId'>[]
 export function normalizeManual(
   observation: Observation,
   file: Upload,

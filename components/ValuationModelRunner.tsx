@@ -4,7 +4,8 @@ import type { Multiple } from '@/lib/valuation/engine'
 import {
   fields,
   type NormalizedManual,
-  type Upload
+  type Upload,
+  validDate
 } from '@/lib/valuation/manual-intake.mjs'
 import {
   applyPeerResearch,
@@ -84,7 +85,7 @@ function csvDownload(name: string, rows: (string | number | null)[][]) {
 }
 
 export function ValuationModelRunner({
-  records,
+  records: rawRecords,
   context,
   onReview,
   files,
@@ -98,13 +99,19 @@ export function ValuationModelRunner({
   initialRunSettings?: RunSettings
   onSettingsChange?: (settings: RunSettings) => void
 }) {
+  const baseModel = React.useMemo(
+    () => prepareModel(rawRecords, context),
+    [rawRecords, context]
+  )
+  const [settings, setSettings] = React.useState<RunSettings>(() => ({
+    ...initialSettings(baseModel),
+    ...initialRunSettings
+  }))
   const model = React.useMemo(
-    () => prepareModel(records, context),
-    [records, context]
+    () => prepareModel(rawRecords, context, settings.forwardMultiplePeriods),
+    [rawRecords, context, settings.forwardMultiplePeriods]
   )
-  const [settings, setSettings] = React.useState<RunSettings>(
-    () => initialRunSettings || initialSettings(model)
-  )
+  const records = model.records
   React.useEffect(() => {
     onSettingsChange?.(settings)
   }, [settings, onSettingsChange])
@@ -142,6 +149,37 @@ export function ValuationModelRunner({
     () => peerPreview(model, settings.multiple, settings.relativePeriod),
     [model, settings.multiple, settings.relativePeriod]
   )
+  const uploadedMultiples = model.relativeInputs.filter(
+    (record) =>
+      settings.multiple === 'EV/EBITDA' &&
+      record.field === 'evEbitdaForward' &&
+      record.value !== null &&
+      record.value > 0 &&
+      preview.peers.some((peer) => peer.issuerId === record.issuerId)
+  )
+  const unresolvedMultipleFiles = (files || [])
+    .map((file) => ({
+      file,
+      records: uploadedMultiples.filter(
+        (record) =>
+          record.source.id.startsWith(`manual:${file.id}:`) &&
+          (!['FY', 'CY', 'NTM'].includes(record.period.basis) ||
+            !validDate(record.period.endDate))
+      )
+    }))
+    .filter((item) => item.records.length)
+  const uploadedMultipleValues = uploadedMultiples
+    .map((record) => record.value!)
+    .toSorted((a, b) => a - b)
+  const middleMultiple = Math.floor(uploadedMultipleValues.length / 2)
+  const uploadedMedian =
+    uploadedMultipleValues.length % 2
+      ? uploadedMultipleValues[middleMultiple]
+      : uploadedMultipleValues.length
+        ? (uploadedMultipleValues[middleMultiple - 1]! +
+            uploadedMultipleValues[middleMultiple]!) /
+          2
+        : undefined
   React.useEffect(() => () => researchController.current?.abort(), [])
   React.useEffect(() => {
     if (!currentFeedback) return
@@ -604,7 +642,8 @@ export function ValuationModelRunner({
       'Classification',
       'Source as of',
       'Source cell',
-      'Definition'
+      'Definition',
+      'Forward multiple period confirmation'
     ])
     for (const record of records)
       rows.push([
@@ -620,7 +659,8 @@ export function ValuationModelRunner({
         record.classification,
         record.source.asOf,
         record.source.locator,
-        record.definition
+        record.definition,
+        record.forwardPeriodConfirmation?.note || ''
       ])
     csvDownload(
       context.issuerId.replaceAll(/[^a-z\d-]/gi, '-') + '-valuation-report.csv',
@@ -1029,11 +1069,96 @@ export function ValuationModelRunner({
               ) : null}
               {preview.periodChoices.map((period) => (
                 <option key={period.key} value={period.key}>
-                  {period.label} · {period.eligiblePeers} aligned peers
+                  {period.label} · {period.eligiblePeers} ready peers
+                  {period.basis !== 'LTM' &&
+                  uploadedMultiples.length &&
+                  !period.eligiblePeers
+                    ? ` · ${uploadedMultiples.length} uploaded multiples found`
+                    : ''}
                 </option>
               ))}
             </select>
           </label>
+          {uploadedMultiples.length && preview.basis !== 'LTM' ? (
+            <section
+              className={styles.notice}
+              aria-label='Uploaded forward EBITDA multiples'
+            >
+              <strong>
+                {uploadedMultiples.length} uploaded SP_TEV_EBITDA_FWD multiples
+                found · median {format(uploadedMedian)}×
+              </strong>
+              <p>
+                The uploaded ratios are the peer TEV/EBITDA inputs. Peer TEV and
+                EBITDA amounts are not required for these rows.
+              </p>
+              {unresolvedMultipleFiles.length ? (
+                <>
+                  <p>
+                    The export did not provide complete forecast-period labels.
+                    Confirm the column covers the selected {preview.periodLabel}{' '}
+                    before applying it to the target EBITDA. Choose a different
+                    earnings period above if needed.
+                  </p>
+                  {unresolvedMultipleFiles.map(({ file, records: missing }) => (
+                    <div key={file.id}>
+                      <p>
+                        {file.name} · {missing.length} multiples need period
+                        confirmation.
+                      </p>
+                      <button
+                        type='button'
+                        className={styles.secondary}
+                        disabled={
+                          !preview.target ||
+                          !preview.basis ||
+                          preview.basis === 'LTM' ||
+                          missing.some(
+                            (record) =>
+                              (record.period.basis &&
+                                record.period.basis !== preview.basis) ||
+                              (record.period.endDate &&
+                                record.period.endDate !==
+                                  preview.target?.period.endDate)
+                          )
+                        }
+                        onClick={() => {
+                          if (
+                            !preview.target ||
+                            !preview.basis ||
+                            preview.basis === 'LTM'
+                          )
+                            return
+                          setSettings((current) => ({
+                            ...current,
+                            peerProfileReview: false,
+                            relativePeriod: preview.periodKey,
+                            forwardMultiplePeriods: {
+                              ...current.forwardMultiplePeriods,
+                              [file.id]: {
+                                basis: preview.basis as 'FY' | 'CY' | 'NTM',
+                                endDate: preview.target!.period.endDate
+                              }
+                            }
+                          }))
+                          setFeedback(null)
+                        }}
+                      >
+                        Confirm {preview.periodLabel} for uploaded multiples in{' '}
+                        {file.name}
+                      </button>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p>
+                  Source period details are available or have been confirmed.
+                  Review the peer checks below, select at least three peers and
+                  calculate.
+                </p>
+              )}
+            </section>
+          ) : null}
           <p className={styles.caption}>
             Target {preview.field}: {format(preview.target?.value)} ·{' '}
             {preview.periodLabel}. Native SP_NET_INC needs explicit
@@ -1057,9 +1182,12 @@ export function ValuationModelRunner({
             >
               {preview.peers.filter((peer) => !peer.reason).length} of{' '}
               {preview.peers.length} peers have aligned {preview.periodLabel}{' '}
-              inputs. Upload SP_TEV_EBITDA_FWD peer multiples or matching peer
-              forecasts in Peer Data. FY estimates are not relabeled as NTM, and
-              trailing earnings are not substituted.
+              inputs.{' '}
+              {uploadedMultiples.length
+                ? 'Uploaded forward multiples are used directly; complete any period confirmation above and review flagged rows below.'
+                : 'Upload SP_TEV_EBITDA_FWD peer multiples or matching peer forecasts in Peer Data.'}{' '}
+              FY estimates are not relabeled as NTM, and trailing earnings are
+              not substituted.
             </p>
           ) : null}
           {preview.target &&
@@ -1224,6 +1352,9 @@ export function ValuationModelRunner({
                       <td>
                         {(peer.suppliedMultiple || peer.metric)?.period
                           .endDate || 'Missing'}
+                        {peer.suppliedMultiple?.forwardPeriodConfirmation ? (
+                          <small>Period confirmed by user</small>
+                        ) : null}
                         <small>
                           {peer.reason ||
                             'Period aligned; review business comparability'}

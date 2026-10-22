@@ -1448,11 +1448,13 @@ export function ValuationDataIntake() {
                         <td>
                           {record.value ?? 'Missing'}
                           <small>
-                            {record.field === 'price'
-                              ? record.currency + ' per share'
-                              : record.currency
-                                ? record.currency + ' millions'
-                                : 'Million shares'}
+                            {record.field === 'evEbitdaForward'
+                              ? '×'
+                              : record.field === 'price'
+                                ? record.currency + ' per share'
+                                : record.currency
+                                  ? record.currency + ' millions'
+                                  : 'Million shares'}
                           </small>
                         </td>
                         <td>

@@ -31,6 +31,17 @@ remain visible in the peer table but cannot enter valuation until confirmed.
 The Comps export links uploaded ratios directly to their original Sources cells;
 it does not invent underlying peer TEV or EBITDA amounts.
 
+Build valuation also shows the count and median of detected `SP_TEV_EBITDA_FWD`
+values beside the earnings-period control. If the source uses an unavailable
+period label such as `#PEND`, the values are shown immediately. The user can
+confirm that a file's undated ratio column covers the selected target earnings
+period in one action. That confirmation fills only missing compatible metadata;
+it does not overwrite a known conflicting source period or convert FY into NTM.
+The raw upload, multiple values, file hash and source-cell references stay intact.
+The model audit, CSV and Excel Sources retain the period-confirmation note.
+Source dates, definitions, positive-value checks and peer-review requirements
+continue to apply. No annual forecasts are calendarized by this action.
+
 Each area has its own file input, drop target, paste dialog, checklist, CSV
 template and file list. A file's category remains in its manifest and sources.
 
