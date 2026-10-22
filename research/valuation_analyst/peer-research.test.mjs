@@ -121,6 +121,16 @@ test('business excerpts skip the contents, strip markup and stay within 25 words
     extractBusinessExcerpt('<p>No business section</p>', '10-K'),
     undefined
   )
+  assert.match(
+    extractBusinessExcerpt(
+      html.replace(
+        '<p>Overview</p>',
+        '<p>Our company was incorporated in 1993. Our principal executive offices are located in Example City and these defined terms refer to the company and all subsidiaries.</p><p>Overview</p>'
+      ),
+      '10-K'
+    ),
+    /^We manufacture/
+  )
 })
 
 test('the live-source adapter verifies identity and returns dated SEC evidence without financial-file uploads', async () => {
@@ -284,4 +294,27 @@ test('drafts cite evidence, flag different industries and preserve manual work a
     applyPeerResearch(undefined, target, peer, comparison).included,
     false
   )
+  const upgradedPeer = {
+    ...peer,
+    filing: { ...peer.filing, businessExcerpt: 'We produce coatings.' }
+  }
+  const refreshed = applyPeerResearch(
+    { ...selection, research: { ...selection.research, reviewed: true } },
+    target,
+    upgradedPeer,
+    comparison
+  )
+  assert.match(refreshed.rationale, /We produce coatings/)
+  assert.equal(refreshed.included, true)
+  assert.equal(refreshed.research.applied, true)
+  assert.equal(refreshed.research.reviewed, false)
+  const edited = applyPeerResearch(
+    { ...selection, rationale: 'My edited generated rationale' },
+    target,
+    upgradedPeer,
+    comparison
+  )
+  assert.equal(edited.rationale, 'My edited generated rationale')
+  assert.match(edited.research.draft, /We produce coatings/)
+  assert.equal(edited.research.applied, false)
 })

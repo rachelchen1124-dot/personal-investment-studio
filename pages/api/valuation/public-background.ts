@@ -9,7 +9,7 @@ export const config = { maxDuration: 90 }
 // This revision adds optional fields; retain the response contract so an open
 // valuation tab can benefit from the lookup fix without losing entered inputs.
 const version = 'public-background-v3'
-const lookupRevision = 'issuer-discovery-v4'
+const lookupRevision = 'sec-connection-v5'
 
 export default async function handler(
   req: NextApiRequest,
@@ -38,7 +38,8 @@ export default async function handler(
     console.info('valuation_public_background', {
       version,
       status: 'complete',
-      provider: profile.provider || 'SEC'
+      provider: profile.provider || 'SEC',
+      secAccess: profile.secAccess
     })
     return res
       .status(200)

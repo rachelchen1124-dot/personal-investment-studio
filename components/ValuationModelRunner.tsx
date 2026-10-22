@@ -118,7 +118,9 @@ export function ValuationModelRunner({
   const [researchErrors, setResearchErrors] = React.useState<
     Record<string, string>
   >({})
-  const profileCache = React.useRef(new Map<string, PublicCompanyProfile>())
+  const profileCache = React.useRef(
+    new Map<string, { profile: PublicCompanyProfile; cachedAt: number }>()
+  )
   const researchController = React.useRef<AbortController | null>(null)
   const feedbackRef = React.useRef<HTMLParagraphElement>(null)
   const dcfResultsRef = React.useRef<HTMLElement>(null)
@@ -173,7 +175,14 @@ export function ValuationModelRunner({
     async function profile(issuerId: string) {
       const key = issuerId + ':' + context.valuationDate
       const cached = profileCache.current.get(key)
-      if (cached) return cached
+      if (
+        cached &&
+        Date.now() - cached.cachedAt <
+          (cached.profile.secAccess?.status === 'available'
+            ? 60 * 60_000
+            : 5 * 60_000)
+      )
+        return cached.profile
       const response = await fetch(
         '/api/valuation/public-background?' +
           new URLSearchParams({ issuerId, asOf: context.valuationDate }),
@@ -202,7 +211,7 @@ export function ValuationModelRunner({
         throw new Error(
           'The public research response could not be verified. Your existing rationale has been preserved.'
         )
-      profileCache.current.set(key, result)
+      profileCache.current.set(key, { profile: result, cachedAt: Date.now() })
       return result
     }
     let completed = 0
@@ -1098,13 +1107,41 @@ export function ValuationModelRunner({
                         ) : null}
                         {research ? (
                           <>
-                            {research.target.warnings.length ||
-                            research.peer.warnings.length ? (
+                            {!research.target.secAccess &&
+                            !research.peer.secAccess &&
+                            (research.target.warnings.length ||
+                              research.peer.warnings.length) ? (
                               <p className={styles.notice}>
                                 Some filing information is unavailable. Review
                                 the public-source details below.
                               </p>
                             ) : null}
+                            {(
+                              [
+                                ['Target', research.target],
+                                ['Peer', research.peer]
+                              ] as const
+                            ).map(([label, profile]) =>
+                              profile.secAccess ? (
+                                <p
+                                  key={label}
+                                  className={
+                                    profile.secAccess.status === 'available'
+                                      ? styles.status
+                                      : styles.notice
+                                  }
+                                >
+                                  <strong>{label} SEC connection:</strong>{' '}
+                                  {profile.secAccess.message}{' '}
+                                  {profile.secAccess.status === 'unavailable'
+                                    ? 'The description below uses the labeled fallback source.'
+                                    : ''}
+                                  {profile.secAccess.retryAt
+                                    ? ` Next SEC retry after ${new Date(profile.secAccess.retryAt).toLocaleTimeString()}.`
+                                    : ''}
+                                </p>
+                              ) : null
+                            )}
                             <details className={styles.hints}>
                               <summary>
                                 Public sources and business excerpts
@@ -1180,6 +1217,16 @@ export function ValuationModelRunner({
                                         </>
                                       ) : null}
                                     </p>
+                                    {profile.filing?.contentRetrievedAt ? (
+                                      <p>
+                                        Filing text retrieved{' '}
+                                        {profile.filing.contentRetrievedAt.slice(
+                                          0,
+                                          10
+                                        )}
+                                        .
+                                      </p>
+                                    ) : null}
                                     {profile.filing?.businessExcerpt ? (
                                       <blockquote>
                                         {profile.filing.businessExcerpt}

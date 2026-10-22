@@ -1,7 +1,10 @@
 // Server-only public-background acquisition, including provider fallbacks.
 import { validDate } from './manual-intake.mjs'
-import { type PublicCompanyProfile } from './peer-research.ts'
-import { defaultSecUserAgent } from './sec.ts'
+import {
+  extractBusinessTopics,
+  type PublicCompanyProfile
+} from './peer-research.ts'
+import { createSecRequester, SecConnectionError } from './sec-transport.ts'
 import bundledDirectory from './sec-ticker-directory.json' with { type: 'json' }
 import { fetchWikimediaPeerProfile } from './wiki-peer-research.ts'
 
@@ -21,7 +24,6 @@ const cache = new Map<
 type TickerDirectory = { entries: TickerEntry[]; capturedAt?: string }
 let tickerCache: (TickerDirectory & { expires: number }) | undefined
 let tickerPending: Promise<TickerDirectory> | undefined
-let requestQueue = Promise.resolve()
 const maxJsonBytes = 8 * 1024 * 1024
 const maxFilingBytes = 18 * 1024 * 1024
 const htmlEntities: Record<string, string> = {
@@ -184,14 +186,21 @@ export function extractBusinessExcerpt(html: string, form: string) {
     const end = remaining.search(
       form === '10-K' ? /\bItem\s+1A\b/i : /\bItem\s+[5-9]\b/i
     )
-    if (end >= 0 && end < 350) continue
+    if (
+      end >= 0 &&
+      end < 350 &&
+      !/\b(?:we|our|manufactur\w*|produc\w*|provid\w*|develop\w*)\b/i.test(
+        remaining.slice(0, end)
+      )
+    )
+      continue
     const section = end < 0 ? remaining : remaining.slice(0, end)
     const paragraphs = section.split(/\n+/).map((line) => line.trim())
     const paragraph = paragraphs.find(
       (line) =>
         line.length >= 100 &&
         !/forward-looking|table of contents/i.test(line) &&
-        /\b(?:we|our|company|business|manufactur\w*|produc\w*|provid\w*|develop\w*)\b/i.test(
+        /\b(?:manufactur\w*|produc\w*|provid\w*|develop\w*|suppl\w*|speciali\w*|operat\w*|customers?|segments?|solutions?)\b/i.test(
           line
         )
     )
@@ -210,29 +219,6 @@ export function extractBusinessExcerpt(html: string, form: string) {
   return undefined
 }
 
-async function boundedText(response: Response, maxBytes: number) {
-  if (Number(response.headers.get('content-length')) > maxBytes)
-    throw new Error('SEC response exceeds the supported document size.')
-  if (!response.body) throw new Error('SEC returned an empty response.')
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let size = 0
-  let text = ''
-  try {
-    for (;;) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      size += chunk.value.byteLength
-      if (size > maxBytes)
-        throw new Error('SEC response exceeds the supported document size.')
-      text += decoder.decode(chunk.value, { stream: true })
-    }
-    return text + decoder.decode()
-  } finally {
-    await reader.cancel()
-  }
-}
-
 export async function fetchPublicPeerProfile(
   issuerInput: string,
   dateInput: string,
@@ -240,6 +226,7 @@ export async function fetchPublicPeerProfile(
     fetcher?: typeof fetch
     skipCache?: boolean
     tickerFallback?: unknown
+    userAgent?: string
   } = {}
 ): Promise<PublicCompanyProfile> {
   const { issuerId, asOf } = validatePeerRequest(issuerInput, dateInput)
@@ -249,33 +236,20 @@ export async function fetchPublicPeerProfile(
     if (cached && cached.expires > Date.now()) return cached.profile
   }
   const fetcher = options.fetcher ?? fetch
-  async function request(url: string, limit = maxJsonBytes) {
-    const previous = requestQueue
-    let release!: () => void
-    requestQueue = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    await previous
-    try {
-      const response = await fetcher(url, {
-        headers: {
-          'User-Agent': defaultSecUserAgent,
-          Accept: 'application/json,text/html'
-        },
-        signal: AbortSignal.timeout(10_000),
-        redirect: 'error'
-      })
-      if (!response.ok)
-        throw new Error(
-          `SEC ${url.includes('company_tickers') ? 'ticker directory' : url.includes('/submissions/') ? 'issuer profile' : 'filing'} returned HTTP ${response.status}. Public research is temporarily unavailable; your existing rationale has been preserved.`
-        )
-      return await boundedText(response, limit)
-    } finally {
-      // Serial requests and a short interval keep each warm server below SEC's limit.
-      await new Promise((resolve) => setTimeout(resolve, 250))
-      release()
-    }
-  }
+  const transport = createSecRequester({
+    fetcher: options.fetcher,
+    userAgent: options.userAgent
+  })
+  const request = (url: string, limit = maxJsonBytes) =>
+    transport.request(
+      url,
+      url.includes('company_tickers')
+        ? 'ticker-directory'
+        : url.includes('/submissions/')
+          ? 'issuer-profile'
+          : 'annual-report',
+      limit
+    )
   async function loadTickers() {
     try {
       return {
@@ -339,14 +313,30 @@ export async function fetchPublicPeerProfile(
   let profileText: string
   try {
     profileText = await request(profileUrl)
-  } catch {
+  } catch (error) {
     const profile = await fetchWikimediaPeerProfile(resolved, issuerId, asOf, {
       fetcher,
       directoryRetrievedAt: directory.capturedAt || new Date().toISOString()
     })
+    profile.secAccess = {
+      status: 'unavailable',
+      stage: 'issuer-profile',
+      code:
+        error instanceof SecConnectionError
+          ? error.code
+          : 'SEC_CONNECTION_ERROR',
+      httpStatus:
+        error instanceof SecConnectionError ? error.httpStatus : undefined,
+      retryAt: error instanceof SecConnectionError ? error.retryAt : undefined,
+      checkedAt: new Date().toISOString(),
+      contactConfigured: transport.contactConfigured,
+      filingContentRetrieved: false,
+      message:
+        error instanceof Error ? error.message : 'SEC issuer lookup failed.'
+    }
     if (!options.skipCache) {
       if (cache.size >= 200) cache.delete(cache.keys().next().value!)
-      cache.set(key, { profile, expires: Date.now() + 60 * 60 * 1000 })
+      cache.set(key, { profile, expires: Date.now() + 5 * 60 * 1000 })
     }
     return profile
   }
@@ -394,6 +384,17 @@ export async function fetchPublicPeerProfile(
     directoryRetrievedAt: directory.capturedAt,
     warnings
   }
+  profile.secAccess = {
+    status: 'no-annual-filing',
+    stage: 'issuer-profile',
+    code: 'SEC_PROFILE_AVAILABLE',
+    httpStatus: 200,
+    checkedAt: new Date().toISOString(),
+    contactConfigured: transport.contactConfigured,
+    filingContentRetrieved: false,
+    message:
+      'SEC issuer profile retrieved; no eligible annual filing has been verified yet.'
+  }
   const filing = selectAnnualFiling(
     jsonObject(data.filings) ? data.filings.recent : undefined,
     asOf
@@ -407,15 +408,49 @@ export async function fetchPublicPeerProfile(
       url
     }
     try {
-      profile.filing.businessExcerpt = extractBusinessExcerpt(
-        await request(url, maxFilingBytes),
-        filing.form
+      const text = await request(url, maxFilingBytes)
+      profile.filing.businessExcerpt = extractBusinessExcerpt(text, filing.form)
+      profile.businessTopics = extractBusinessTopics(
+        profile.filing.businessExcerpt || ''
       )
+      profile.filing.contentRetrievedAt = new Date().toISOString()
+      profile.secAccess = {
+        ...profile.secAccess,
+        status: profile.filing.businessExcerpt ? 'available' : 'partial',
+        stage: 'annual-report',
+        code: profile.filing.businessExcerpt
+          ? 'SEC_FILING_RETRIEVED'
+          : 'SEC_EXCERPT_UNAVAILABLE',
+        checkedAt: new Date().toISOString(),
+        filingContentRetrieved: true,
+        message: profile.filing.businessExcerpt
+          ? `SEC ${filing.form} retrieved and business excerpt extracted.`
+          : 'The SEC filing was retrieved, but a reliable business excerpt could not be extracted.'
+      }
       if (!profile.filing.businessExcerpt)
         warnings.push(
           'A reliable business-section excerpt could not be extracted. Open the filing to review products and end markets.'
         )
-    } catch {
+    } catch (error) {
+      profile.secAccess = {
+        ...profile.secAccess,
+        status: 'partial',
+        stage: 'annual-report',
+        code:
+          error instanceof SecConnectionError
+            ? error.code
+            : 'SEC_CONNECTION_ERROR',
+        httpStatus:
+          error instanceof SecConnectionError ? error.httpStatus : undefined,
+        retryAt:
+          error instanceof SecConnectionError ? error.retryAt : undefined,
+        checkedAt: new Date().toISOString(),
+        filingContentRetrieved: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'SEC filing text retrieval failed.'
+      }
       warnings.push(
         'The filing text could not be retrieved. The SEC profile and filing reference are available; review the filing before using the draft.'
       )
@@ -427,7 +462,12 @@ export async function fetchPublicPeerProfile(
   if (!profile.sic) warnings.push('SEC industry classification is unavailable.')
   if (!options.skipCache) {
     if (cache.size >= 200) cache.delete(cache.keys().next().value!)
-    cache.set(key, { profile, expires: Date.now() + 60 * 60 * 1000 })
+    cache.set(key, {
+      profile,
+      expires:
+        Date.now() +
+        (profile.secAccess.status === 'available' ? 60 : 5) * 60 * 1000
+    })
   }
   return profile
 }

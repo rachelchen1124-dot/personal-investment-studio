@@ -15,6 +15,17 @@ export type PublicCompanyProfile = {
   businessDescription?: string
   businessDescriptionUrl?: string
   businessTopics?: string[]
+  secAccess?: {
+    status: 'available' | 'partial' | 'unavailable' | 'no-annual-filing'
+    stage: 'ticker-directory' | 'issuer-profile' | 'annual-report'
+    code: string
+    httpStatus?: number
+    checkedAt: string
+    retryAt?: string
+    contactConfigured: boolean
+    filingContentRetrieved: boolean
+    message: string
+  }
   informationDate: string
   filing?: {
     form: string
@@ -22,6 +33,7 @@ export type PublicCompanyProfile = {
     period: string
     url: string
     businessExcerpt?: string
+    contentRetrievedAt?: string
   }
   warnings: string[]
 }
@@ -169,10 +181,12 @@ export function applyPeerResearch(
   peer: PublicCompanyProfile,
   comparison: PeerComparison
 ): PeerSelection {
-  if (selection?.research?.applied && selection.rationale.trim())
-    return selection
   const draft = draftPeerRationale(target, peer, comparison)
-  const applied = !selection?.rationale.trim()
+  const untouchedDraft =
+    selection?.research?.applied &&
+    selection.rationale === selection.research.draft
+  if (untouchedDraft && draft === selection.research!.draft) return selection
+  const applied = !selection?.rationale.trim() || Boolean(untouchedDraft)
   return {
     included: selection?.included ?? false,
     rationale: applied ? draft : selection!.rationale,
