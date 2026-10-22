@@ -320,7 +320,9 @@ export async function fetchWikimediaPeerProfile(
           )
           if (typeof page.extract === 'string') {
             description = excerpt(page.extract)
-            businessTopics = extractBusinessTopics(page.extract)
+            // Restrict subjects to the displayed, cited current excerpt. The
+            // rest of an introduction may describe disposed legacy businesses.
+            businessTopics = extractBusinessTopics(description)
           }
           if (
             object(revision) &&

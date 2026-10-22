@@ -197,11 +197,7 @@ test('current business excerpts and activity topics skip a disposed historical b
     }
   )
   assert.doesNotMatch(profile.businessDescription, /2017|lubricant/)
-  assert.deepEqual(profile.businessTopics, [
-    'specialty chemicals',
-    'coatings',
-    'adhesives'
-  ])
+  assert.deepEqual(profile.businessTopics, ['specialty chemicals'])
   assert.equal(
     extractBusinessTopics('No business activity disclosed.').length,
     0
@@ -213,7 +209,7 @@ test('current business excerpts and activity topics skip a disposed historical b
   )
   assert.match(
     draft,
-    /both source descriptions mention specialty chemicals, coatings, adhesives/
+    /both source descriptions mention specialty chemicals/
   )
   assert.match(draft, /partial source descriptions/)
   assert.doesNotMatch(draft, /lubricant/)
