@@ -247,7 +247,28 @@ export function prepareModel(
         }
       : undefined
   const workingCapital = instant('operatingWorkingCapital')
-  const peerRecords = records.filter(
+  const relativeInputs = records.filter((record) =>
+    ['peers', 'forward'].includes(record.source.section)
+  )
+  const qualifiedIds = [
+    ...new Set(
+      relativeInputs
+        .map((record) => record.issuerId.trim().toUpperCase())
+        .filter((id) => id.includes(':'))
+    )
+  ]
+  const resolvedInputs = relativeInputs.map((record) => {
+    let id = record.issuerId.trim().toUpperCase()
+    if (!id.includes(':')) {
+      const matches = qualifiedIds.filter((qualified) =>
+        sameIssuer(id, qualified)
+      )
+      // A bare ticker can join one exchange-qualified security, never two.
+      if (matches.length === 1) id = matches[0]!
+    }
+    return id === record.issuerId ? record : { ...record, issuerId: id }
+  })
+  const peerRecords = resolvedInputs.filter(
     (record) =>
       record.source.section === 'peers' &&
       available(record, context.valuationDate)
@@ -258,7 +279,7 @@ export function prepareModel(
   const targetScreen = peerRecords.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
   )
-  const relativeRecords = records.filter(
+  const relativeRecords = resolvedInputs.filter(
     (record) =>
       ['peers', 'forward'].includes(record.source.section) &&
       available(record, context.valuationDate)
@@ -283,14 +304,12 @@ export function prepareModel(
     tradeWorkingCapital,
     workingCapital,
     peers: [
-      ...new Set([
-        ...peers,
-        ...relativeRecords.map((record) => record.issuerId)
-      ])
+      ...new Set([...peers, ...resolvedInputs.map((record) => record.issuerId)])
     ]
       .filter((id) => !sameIssuer(id, context.issuerId))
       .toSorted(),
     relativeRecords,
+    relativeInputs: resolvedInputs,
     peerRecords,
     targetScreen,
     consensus,
@@ -676,12 +695,33 @@ export function peerPreview(
             record.period.basis === key.split(':')[0]
         )
       )
+      const unavailable = model.relativeInputs.find(
+        (record) =>
+          record.issuerId === issuerId &&
+          record.field === field &&
+          record.period.basis === key.split(':')[0] &&
+          (!available(record, model.context.valuationDate) ||
+            !relativeMetric(record, model.context.valuationDate))
+      )
+      const unavailableReason = unavailable
+        ? !validDate(unavailable.period.endDate)
+          ? 'Forecast found, but its period end needs confirmation in Map and confirm.'
+          : unavailable.source.asOf > model.context.valuationDate
+            ? `Forecast dated ${unavailable.source.asOf} is after the valuation date.`
+            : unavailable.classification !== 'consensus' &&
+                key.split(':')[0] !== 'LTM'
+              ? 'Forward earnings found, but their consensus classification needs confirmation in Map and confirm.'
+              : unavailable.issues.find(
+                  (issue) => issue.code !== 'REVIEW_REQUIRED'
+                )?.message
+        : undefined
       const reason = !metric
         ? otherMetric &&
           target &&
           otherMetric.period.endDate !== target.period.endDate
           ? `Period ${otherMetric.period.endDate} differs from target ${target.period.endDate}; upload calendarized or aligned estimates.`
-          : `Missing or conflicting ${key.split(':')[0] || 'selected-period'} ${field}; upload an aligned earnings value. Values from other periods were not substituted.`
+          : unavailableReason ||
+            `Missing or conflicting ${key.split(':')[0] || 'selected-period'} ${field}; upload an aligned earnings value. Values from other periods were not substituted.`
         : !numerator
           ? 'Missing market valuation numerator'
           : metric.value! <= 0 || numerator.value! <= 0
@@ -694,14 +734,25 @@ export function peerPreview(
                   ? `Market snapshot ${numerator.source.asOf} does not match valuation date ${model.context.valuationDate}`
                   : metric.period.endDate !== target.period.endDate
                     ? `Period ${metric.period.endDate} differs from target ${target.period.endDate}`
-                    : metric.definition !== target.definition
-                      ? 'Accounting definitions differ'
-                      : ''
+                    : metric.currency !== numerator.currency ||
+                        metric.currency !== target.currency
+                      ? 'Currencies differ; confirm source currencies or supply explicitly converted inputs.'
+                      : metric.definition !== target.definition
+                        ? 'Accounting definitions differ'
+                        : ''
       return {
         issuerId,
         metric,
         numerator,
         reason,
+        multiple:
+          metric?.value &&
+          metric.value > 0 &&
+          numerator?.value &&
+          numerator.value > 0 &&
+          metric.currency === numerator.currency
+            ? numerator.value / metric.value
+            : null,
         growth: forecastGrowth(model.relativeRecords, metric)
       }
     })
@@ -783,11 +834,8 @@ export function executeRelative(
     settings.peerProfileReview,
     'Confirm the peer export currency, mixed-unit profile and saved snapshot date.'
   )
-  const preview = peerPreview(
-    prepareModel(records, context),
-    settings.multiple,
-    settings.relativePeriod
-  )
+  const model = prepareModel(records, context)
+  const preview = peerPreview(model, settings.multiple, settings.relativePeriod)
   requireValue(
     preview.target,
     `Map the target company's ${preview.field} for the selected earnings period. Forward comps need target and peer estimates with the same basis, end date and accounting definition.`
@@ -828,10 +876,10 @@ export function executeRelative(
     target.issuerId,
     ...selected.map((peer) => peer.issuerId)
   ]) {
-    const market = records.filter(
+    const market = model.peerRecords.filter(
       (record) =>
         record.source.section === 'peers' &&
-        record.issuerId === issuer &&
+        sameIssuer(record.issuerId, issuer) &&
         record.source.asOf === context.valuationDate
     )
     const price = one(market.filter((record) => record.field === 'price'))

@@ -98,6 +98,22 @@ thousands and individual shares. The user must confirm this mixed-unit profile,
 currency and saved formula results. Pending/error cells remain unavailable;
 metadata errors do not discard otherwise readable company rows.
 
+Native peer screens also map earnings forecasts from separate sheets and repeated
+metric columns. FY1/FY+1 and FY2/FY+2 headings use their matching issuer-specific
+period-end columns; absolute dated FY/CY/NTM headings retain that basis. Missing
+or conflicting dates create reviewable mappings with explicit period-end issues,
+not guessed December dates. Forward ratio columns are never treated as earnings
+amounts. Other monetary forecast fields require a confirmed scale. The peer
+table shows the selected-period multiple in its own column, with exclusions and
+unresolved mapping issues beside it. Unique bare tickers join their qualified
+market-data identity; ambiguous exchanges remain separate.
+
+After an importer update, save the intake JSON before refreshing and reopen it
+to rebuild proposals from the original workbook tables. Manual mappings and
+accounting-definition edits are preserved. The exact legacy automatic Capital IQ
+consensus definition is migrated to the current shared definition so saved
+target estimates can align with newly imported peer estimates.
+
 **Fetch public information** retrieves SEC profiles and dated annual-report
 references for the target and requested US-listed peers. Fetch one peer or all
 selected peers. A cited draft fills only an empty rationale; existing text is

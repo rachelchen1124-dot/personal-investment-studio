@@ -67,6 +67,7 @@ export const sections: {
   note: string
 }[]
 export const fields: Record<string, string>
+export function capitalIqConsensusDefinition(field: string): string
 export function numericValue(raw: unknown): number | null
 export function validDate(value: unknown): boolean
 export function parseDelimited(text: string): string[][]

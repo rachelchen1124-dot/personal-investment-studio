@@ -1107,10 +1107,15 @@ export function ValuationModelRunner({
           ) : null}
           <div className={styles.tableWrap}>
             <table className={styles.reviewTable}>
+              <caption className={styles.caption}>
+                Peer {settings.multiple} multiples · {preview.periodLabel}.
+                Flagged rows remain excluded until their checks are resolved.
+              </caption>
               <thead>
                 <tr>
                   <th scope='col'>Include / issuer</th>
                   <th scope='col'>Numerator / metric</th>
+                  <th scope='col'>Peer {settings.multiple} (×)</th>
                   <th scope='col'>Period / checks</th>
                   <th scope='col'>
                     Comparability rationale (required for selected peers)
@@ -1150,13 +1155,16 @@ export function ValuationModelRunner({
                       <td>
                         {format(peer.numerator?.value)} /{' '}
                         {format(peer.metric?.value)}
-                        <small>
-                          {!peer.reason && peer.metric?.value
-                            ? format(
-                                peer.numerator!.value! / peer.metric.value
-                              ) + '×'
-                            : '—'}
-                        </small>
+                      </td>
+                      <td>
+                        <strong>
+                          {peer.multiple === null
+                            ? '—'
+                            : format(peer.multiple) + '×'}
+                        </strong>
+                        {peer.multiple !== null && peer.reason ? (
+                          <small>Review required</small>
+                        ) : null}
                         {peer.growth ? (
                           <small>
                             Forecast change {percent(peer.growth.value)} (

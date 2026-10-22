@@ -1,4 +1,5 @@
 import {
+  capitalIqConsensusDefinition,
   fields,
   mapTemplate,
   numericValue,
@@ -116,6 +117,48 @@ function consensusPeriod(header: string) {
     .toISOString()
     .slice(0, 10)
   return { basis: match[1] === 'FY' ? 'FY' : 'QTR', endDate }
+}
+
+function screenMetric(code: string) {
+  // Match earnings amounts only, never ratios such as SP_TEV_EBITDA_FWD.
+  const match = code.match(
+    /^(?:SP|IQ)_(?:(EST)_)?(TOTAL_REV|REVENUE|EBITDA|EBIT|NET_INC|NI)(?:_(EST|FWD))?$/
+  )
+  if (!match) return undefined
+  const field = {
+    TOTAL_REV: 'revenue',
+    REVENUE: 'revenue',
+    EBITDA: 'ebitda',
+    EBIT: 'ebit',
+    NET_INC: 'netIncome',
+    NI: 'netIncome'
+  }[match[2]!]
+  return { field: field!, estimate: Boolean(match[1] || match[3]) }
+}
+
+function screenPeriod(label: string) {
+  const text = clean(label).toUpperCase()
+  const fiscal = consensusPeriod(clean(label))
+  if (fiscal?.basis === 'FY')
+    return { key: `FY${fiscal.endDate.slice(0, 4)}`, ...fiscal }
+  const prefix = text.match(/^(LTM|NTM|CY|FY)/)?.[0]
+  if (!prefix) return undefined
+  const suffix =
+    text
+      .slice(prefix.length)
+      .trimStart()
+      .match(/^\+?\d{1,4}(?!\d)/)?.[0] || ''
+  let key = prefix + (prefix === 'FY' || prefix === 'CY' ? suffix : '')
+  if (prefix === 'FY' && /^[1-9]\d?$/.test(suffix)) key = `FY+${suffix}`
+  const basis = key.startsWith('FY') ? 'FY' : key.startsWith('CY') ? 'CY' : key
+  const explicit = text.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0]
+  const endDate =
+    explicit && validDate(explicit)
+      ? explicit
+      : /^CY\d{4}$/.test(key)
+        ? `${key.slice(2)}-12-31`
+        : ''
+  return { key, basis, endDate }
 }
 
 /** Recognize native layouts; never infer financial scale from value magnitude. */
@@ -255,7 +298,10 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
               currency: file.currency,
               unit: file.amountUnit,
               availableAt: file.availableAt,
-              definition: `Capital IQ consensus Actuals/Estimates row: ${clean(row[0])}; ${suffix === 'A' ? 'provider historical reference, distinct from statement actuals' : 'displayed consensus statistic'}; month-end fiscal convention requires confirmation.`,
+              definition:
+                suffix === 'A'
+                  ? `Capital IQ consensus Actuals/Estimates row: ${clean(row[0])}; provider historical reference, distinct from statement actuals; month-end fiscal convention requires confirmation.`
+                  : capitalIqConsensusDefinition(field),
               sign: 'as-reported',
               sheet: sheet.name,
               row: rowIndex,
@@ -273,49 +319,27 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
     const codeRow = rows.findIndex(
       (row) => row.includes('SP_ENTITY_NAME') && row.includes('SP_ENTITY_ID')
     )
-    if (
-      codeRow !== -1 &&
-      rows[codeRow]!.includes('IQ_TEV') &&
-      rows[codeRow]!.includes('SP_TOTAL_REV')
-    ) {
+    if (codeRow !== -1) {
       recognized = true
       file.provider = 'Capital IQ'
       file.availableAt = file.availableAt || exportDate(file.name)
-      file.amountUnit = file.amountUnit || 'thousands'
+      const unknownIqScale = rows[codeRow]!.some(
+        (code) => code.startsWith('IQ_') && screenMetric(code)?.estimate
+      )
+      file.amountUnit = file.amountUnit || (unknownIqScale ? '' : 'thousands')
       file.shareUnit = 'units'
       // This profile is visible and must be confirmed in the model screen.
       // IQ market values use millions; SP monetary statement fields use the
       // selected financial magnitude. Share units have a separate confirmation.
       const codes = rows[codeRow]!
       const periods = rows[codeRow + 1] || []
-      const columnFor = (code: string, basis = '') =>
-        codes.findIndex(
-          (value, column) =>
-            value === code && (!basis || periods[column] === basis)
-        )
+      const columnFor = (code: string) => codes.indexOf(code)
       const idColumn = columnFor('SP_ENTITY_NAME')
-      const endColumn = columnFor('SP_PERIOD_END', 'LTM')
-      const columns = [
+      const marketColumns = [
         ['price', columnFor('SP_PRICE_CLOSE'), 'units'],
         ['basicShares', columnFor('SP_LATEST_SHARES_OUT'), 'units'],
         ['equityValue', columnFor('SP_MARKETCAP'), 'millions'],
-        ['enterpriseValue', columnFor('IQ_TEV'), 'millions'],
-        [
-          'revenue',
-          columnFor('SP_TOTAL_REV', 'LTM'),
-          file.amountUnit || 'thousands'
-        ],
-        [
-          'ebitda',
-          columnFor('SP_EBITDA', 'LTM'),
-          file.amountUnit || 'thousands'
-        ],
-        ['ebit', columnFor('SP_EBIT', 'LTM'), file.amountUnit || 'thousands'],
-        [
-          'netIncome',
-          columnFor('SP_NET_INC', 'LTM'),
-          file.amountUnit || 'thousands'
-        ]
+        ['enterpriseValue', columnFor('IQ_TEV'), 'millions']
       ] as const
       for (let rowIndex = codeRow + 2; rowIndex < rows.length; rowIndex++) {
         const row = rows[rowIndex]!
@@ -323,38 +347,86 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
           /\(([A-Z0-9.]+:[A-Z0-9.\-/]+)\)\s*$/i
         )?.[1]
         if (!security) continue // Excludes provider summary rows, not peer observations.
-        for (const [field, column, unit] of columns) {
+        for (const [field, column, unit] of marketColumns) {
           if (column < 0 || numericValue(row[column]) === null) continue
-          const market = [
-            'price',
-            'basicShares',
-            'enterpriseValue',
-            'equityValue'
-          ].includes(field)
-          const endDate = market ? file.availableAt : clean(row[endColumn])
-          if (!validDate(endDate)) continue
           push({
             field,
             issuerId: security,
             rawValue: clean(row[column]),
-            basis: market ? 'instant' : 'LTM',
-            endDate,
-            classification: market ? 'market' : 'reported',
+            basis: 'instant',
+            endDate: file.availableAt,
+            classification: 'market',
             currency: field === 'basicShares' ? '' : file.currency,
             unit,
             availableAt: file.availableAt,
-            definition: market
-              ? `Capital IQ screen ${codes[column]}; snapshot date and mixed-unit profile require confirmation.`
-              : `Capital IQ standardized ${field}; reported treatment, including SBC and leases as classified by provider.`,
+            definition: `Capital IQ screen ${codes[column]}; snapshot date and mixed-unit profile require confirmation.`,
             sign: 'as-reported',
             sheet: sheet.name,
             row: rowIndex,
             column
           })
         }
+        for (const [column, code] of codes.entries()) {
+          const metric = screenMetric(code)
+          if (!metric) continue
+          const raw = clean(row[column])
+          if (numericValue(raw.replace(/\s+[AE]$/, '')) === null) continue
+          const period = screenPeriod(clean(periods[column]))
+          if (!period || period.key === 'FY0' || period.key === 'FY+0') continue
+          const dateColumns = codes.flatMap((candidate, index) =>
+            /^(?:SP|IQ)_(?:EST_)?PERIOD_END$/.test(candidate) &&
+            screenPeriod(clean(periods[index]))?.key === period.key
+              ? [index]
+              : []
+          )
+          const dates = [
+            ...new Set(
+              [
+                period.endDate,
+                ...dateColumns.map((index) => clean(row[index]))
+              ].filter((date) => validDate(date))
+            )
+          ]
+          const endDate = dates.length === 1 ? dates[0]! : ''
+          const forecast =
+            period.basis !== 'LTM' &&
+            !/\s+A$/.test(raw) &&
+            (metric.estimate ||
+              /\s+E$/.test(raw) ||
+              /^FY\+[1-9]/.test(period.key) ||
+              period.basis === 'NTM' ||
+              (validDate(endDate) && endDate > file.availableAt) ||
+              (/^(FY|CY)\d{4}$/.test(period.key) &&
+                period.key.slice(2) >= file.availableAt.slice(0, 4)))
+          if (period.basis !== 'LTM' && !forecast) continue
+          push({
+            field: metric.field,
+            issuerId: security,
+            rawValue: raw,
+            basis: period.basis,
+            endDate,
+            classification: forecast ? 'consensus' : 'reported',
+            currency: file.currency,
+            // Financial figures inherit the editable, confirmed file scale;
+            // market values and shares retain their separate explicit scales.
+            unit: '',
+            availableAt: file.availableAt,
+            definition: forecast
+              ? capitalIqConsensusDefinition(metric.field)
+              : `Capital IQ standardized ${metric.field}; reported treatment, including SBC and leases as classified by provider.`,
+            sign: 'as-reported',
+            sheet: sheet.name,
+            row: rowIndex,
+            column
+          })
+          if (forecast && !endDate)
+            notes.push(
+              `${sheet.name}: ${code} ${period.key} forecasts were mapped but need an explicit, unambiguous period end in Map and confirm. FY+1 is not assumed to mean December year-end or NTM.`
+            )
+        }
       }
       notes.push(
-        'Peer code columns recognized. Confirm currency, IQ market values in millions, SP financials in thousands and individual shares. Missing/#PEND values are skipped; FY0 fields are not mixed into LTM. Review every peer rationale and period.'
+        'Peer market values and LTM/forward earnings columns recognized. Confirm currency, monetary scales, consensus statistic and accounting treatment. IQ market values use millions; SP financial fields use the confirmed financial scale (initially thousands). Other forecast fields need an explicit scale. Missing/#PEND values and forward ratios are not earnings amounts; FY0 is not mixed into LTM. Forward periods retain their own issuer-specific end dates.'
       )
     } else {
       for (const item of mapTemplate(sheet)) push(item)
