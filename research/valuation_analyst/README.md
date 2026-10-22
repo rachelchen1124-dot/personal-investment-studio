@@ -51,6 +51,30 @@ references are retained but not authenticated by the math engine. See
 
 ## Run independently
 
+The peer research endpoint reads the server-only `SEC_USER_AGENT` setting. Use a
+declared application name and a real public contact email, as required by SEC's
+access guidance. Requests are serialized and cached within each warm server;
+HTTP 403/429 pauses requests to that SEC origin for at least ten minutes.
+
+On 2026-10-22, direct SEC retrieval succeeded from the collection environment but
+Vercel returned SEC's automated-traffic HTTP 403. The site therefore includes
+dated SEC profile and annual-report excerpt captures for SOLS and its ten current
+peers. A failed live lookup retains the HTTP status, labels the capture date and
+warns that newer filings are unverified. Captures cannot supply a filing published
+after the selected information date. Other issuers retain the verified Wikimedia
+fallback. This cache does not establish that Vercel has a working live SEC link.
+
+To refresh the complete source capture deliberately, set `SEC_USER_AGENT` in the
+shell environment, then run:
+
+```sh
+node research/valuation_analyst/capture-sec-profiles.mjs SOLS NYSE:ALB NYSE:ASH NYSE:AVNT NYSE:AXTA NYSE:CE NYSE:EMN NYSE:ESI NYSE:FUL NYSE:NEU NYSE:RPM
+```
+
+The command writes only verified SEC sources and preserves the existing file if
+any requested capture fails. It is not run automatically during builds. Review
+and commit the resulting JSON with the code before deployment.
+
 Use Node 24, as required by this repository. These commands work before installing
 the website's dependencies:
 

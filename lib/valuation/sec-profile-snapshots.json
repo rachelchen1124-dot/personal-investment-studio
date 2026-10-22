@@ -1,0 +1,289 @@
+{
+  "format": "sec-profile-snapshot-v1",
+  "capturedAt": "2026-10-22T12:23:43.658Z",
+  "profiles": [
+    {
+      "issuerId": "SOLS",
+      "cik": "0002064953",
+      "name": "Solstice Advanced Materials Inc.",
+      "ticker": "SOLS",
+      "exchange": "Nasdaq",
+      "sic": "2800",
+      "industry": "Chemicals & Allied Products",
+      "businessAddress": "MORRIS PLAINS, NJ",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0002064953.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:19:55.963Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-19",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/2064953/000206495326000008/sols-20251231.htm",
+        "businessExcerpt": "…is a global, differentiated advanced materials company and a leading global provider of refrigerants, blowing agents, conversion services for the nuclear energy sector, semiconductor materials,…",
+        "contentRetrievedAt": "2026-10-22T12:20:03.008Z"
+      },
+      "businessTopics": [
+        "refrigerants",
+        "electronic materials"
+      ],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:ALB",
+      "cik": "0000915913",
+      "name": "ALBEMARLE CORP",
+      "ticker": "ALB",
+      "exchange": "NYSE",
+      "sic": "2821",
+      "industry": "Plastic Materials, Synth Resins & Nonvulcan Elastomers",
+      "businessAddress": "CHARLOTTE, NC",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0000915913.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:20:10.140Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-11",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/915913/000091591326000018/alb-20251231.htm",
+        "businessExcerpt": "…is a world leader in transforming essential resources into critical ingredients for mobility, energy, connectivity, and health. Our purpose is to enable a more resilient…",
+        "contentRetrievedAt": "2026-10-22T12:20:17.265Z"
+      },
+      "businessTopics": [],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:ASH",
+      "cik": "0001674862",
+      "name": "ASHLAND INC.",
+      "ticker": "ASH",
+      "exchange": "NYSE",
+      "sic": "5160",
+      "industry": "Wholesale-Chemicals & Allied Products",
+      "businessAddress": "WILMINGTON, DE",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0001674862.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:20:24.299Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2025-11-20",
+        "period": "2025-09-30",
+        "url": "https://www.sec.gov/Archives/edgar/data/1674862/000119312525289248/ash-20250930.htm",
+        "businessExcerpt": "The Company serves customers in a wide range of consumer and industrial markets including, architectural coatings, construction, energy, food and beverage, personal care and pharmaceutical.…",
+        "contentRetrievedAt": "2026-10-22T12:20:31.435Z"
+      },
+      "businessTopics": [
+        "coatings"
+      ],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:AVNT",
+      "cik": "0001122976",
+      "name": "AVIENT CORP",
+      "ticker": "AVNT",
+      "exchange": "NYSE",
+      "sic": "2821",
+      "industry": "Plastic Materials, Synth Resins & Nonvulcan Elastomers",
+      "businessAddress": "AVON LAKE, OH",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0001122976.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:20:38.423Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-17",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/1122976/000112297626000039/avnt-20251231.htm",
+        "businessExcerpt": "…are an innovator of materials solutions to help our customers succeed, while enabling a sustainable world. Our products include specialty engineered materials, performance fibers, advanced…",
+        "contentRetrievedAt": "2026-10-22T12:20:45.666Z"
+      },
+      "businessTopics": [
+        "polymers and engineered plastics"
+      ],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:AXTA",
+      "cik": "0001616862",
+      "name": "Axalta Coating Systems Ltd.",
+      "ticker": "AXTA",
+      "exchange": "NYSE",
+      "sic": "2851",
+      "industry": "Paints, Varnishes, Lacquers, Enamels & Allied Prods",
+      "businessAddress": "PHILADELPHIA, PA",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0001616862.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:20:52.905Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-13",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/1616862/000162828026008008/axta-20251231.htm",
+        "businessExcerpt": "…is a leading global manufacturer, marketer and distributor of high-performance coatings systems and products. We have over a 150-year heritage in the coatings industry and…",
+        "contentRetrievedAt": "2026-10-22T12:20:59.907Z"
+      },
+      "businessTopics": [
+        "coatings"
+      ],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:CE",
+      "cik": "0001306830",
+      "name": "Celanese Corp",
+      "ticker": "CE",
+      "exchange": "NYSE",
+      "sic": "2820",
+      "industry": "Plastic Material, Synth Resin/Rubber, Cellulos (No Glass)",
+      "businessAddress": "IRVING, TX",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0001306830.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:21:06.944Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-24",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/1306830/000130683026000031/ce-20251231.htm",
+        "businessExcerpt": "…are a global chemical and specialty materials company. We are a global producer of high performance engineered polymers that are used in a variety of…",
+        "contentRetrievedAt": "2026-10-22T12:21:14.653Z"
+      },
+      "businessTopics": [
+        "polymers and engineered plastics"
+      ],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:EMN",
+      "cik": "0000915389",
+      "name": "EASTMAN CHEMICAL CO",
+      "ticker": "EMN",
+      "exchange": "NYSE",
+      "sic": "2821",
+      "industry": "Plastic Materials, Synth Resins & Nonvulcan Elastomers",
+      "businessAddress": "KINGSPORT, TN",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0000915389.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:21:22.296Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-13",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/915389/000091538926000013/emn-20251231.htm",
+        "businessExcerpt": "…is a global specialty materials company that produces a broad range of products found in items people use every day. Eastman began business in 1920…",
+        "contentRetrievedAt": "2026-10-22T12:21:29.293Z"
+      },
+      "businessTopics": [],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:ESI",
+      "cik": "0001590714",
+      "name": "Element Solutions Inc",
+      "ticker": "ESI",
+      "exchange": "NYSE",
+      "sic": "2890",
+      "industry": "Miscellaneous Chemical Products",
+      "businessAddress": "MIAMI BEACH, FL",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0001590714.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:23:36.571Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-18",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/1590714/000159071426000018/esi-20251231.htm",
+        "businessExcerpt": "…is a leading global specialty chemicals technology company whose businesses supply a broad range of solutions that enhance the performance of products people use every…",
+        "contentRetrievedAt": "2026-10-22T12:23:43.654Z"
+      },
+      "businessTopics": [
+        "specialty chemicals"
+      ],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:FUL",
+      "cik": "0000039368",
+      "name": "FULLER H B CO",
+      "ticker": "FUL",
+      "exchange": "NYSE",
+      "sic": "2891",
+      "industry": "Adhesives & Sealants",
+      "businessAddress": "ST PAUL, MN",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0000039368.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:21:50.650Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-01-22",
+        "period": "2025-11-29",
+        "url": "https://www.sec.gov/Archives/edgar/data/39368/000143774926001767/ful20251130_10k.htm",
+        "businessExcerpt": "…are a leading worldwide formulator, manufacturer and marketer of adhesives, sealants and other specialty chemical products. Sales operations span 34 countries in North America, Europe,…",
+        "contentRetrievedAt": "2026-10-22T12:21:57.842Z"
+      },
+      "businessTopics": [
+        "specialty chemicals",
+        "adhesives"
+      ],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:NEU",
+      "cik": "0001282637",
+      "name": "NEWMARKET CORP",
+      "ticker": "NEU",
+      "exchange": "NYSE",
+      "sic": "2860",
+      "industry": "Industrial Organic Chemicals",
+      "businessAddress": "RICHMOND, VA",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0001282637.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:22:03.471Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-02-12",
+        "period": "2025-12-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/1282637/000128263726000005/neu-20251231.htm",
+        "businessExcerpt": "…is a holding company and is the parent company of Afton Chemical Corporation (Afton), Ethyl Corporation (Ethyl), American Pacific Corporation (AMPAC), Calca Solutions, LLC (Calca),…",
+        "contentRetrievedAt": "2026-10-22T12:22:10.410Z"
+      },
+      "businessTopics": [],
+      "provider": "SEC"
+    },
+    {
+      "issuerId": "NYSE:RPM",
+      "cik": "0000110621",
+      "name": "RPM INTERNATIONAL INC/DE/",
+      "ticker": "RPM",
+      "exchange": "NYSE",
+      "sic": "2851",
+      "industry": "Paints, Varnishes, Lacquers, Enamels & Allied Prods",
+      "businessAddress": "MEDINA, OH",
+      "profileUrl": "https://data.sec.gov/submissions/CIK0000110621.json",
+      "informationDate": "2026-10-22",
+      "retrievedAt": "2026-10-22T12:22:17.451Z",
+      "warnings": [],
+      "filing": {
+        "form": "10-K",
+        "filed": "2026-07-22",
+        "period": "2026-05-31",
+        "url": "https://www.sec.gov/Archives/edgar/data/110621/000119312526312142/rpm-20260531.htm",
+        "businessExcerpt": "Our subsidiaries manufacture, market and sell various specialty chemical product lines, including high-quality specialty paints, infrastructure rehab and repair products, protective coatings, roofing systems, sealants…",
+        "contentRetrievedAt": "2026-10-22T12:22:24.602Z"
+      },
+      "businessTopics": [
+        "specialty chemicals",
+        "coatings"
+      ],
+      "provider": "SEC"
+    }
+  ]
+}

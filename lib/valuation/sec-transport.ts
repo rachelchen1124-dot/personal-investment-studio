@@ -196,14 +196,14 @@ export function createSecRequester(
           current.cache.set(url, { text, expires: now() + 10 * 60 * 1000 })
         }
         return text
-      } catch (error) {
-        if (error instanceof SecConnectionError) throw error
+      } catch (err) {
+        if (err instanceof SecConnectionError) throw err
         throw new SecConnectionError(
-          error instanceof Error && error.name === 'TimeoutError'
+          err instanceof Error && err.name === 'TimeoutError'
             ? 'SEC_TIMEOUT'
             : 'SEC_CONNECTION_ERROR',
           stage,
-          error instanceof Error && error.name === 'TimeoutError'
+          err instanceof Error && err.name === 'TimeoutError'
             ? 'The SEC request timed out.'
             : 'The SEC response could not be retrieved or read.'
         )

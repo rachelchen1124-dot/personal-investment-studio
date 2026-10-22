@@ -8,7 +8,8 @@ import {
 } from '@/lib/valuation/manual-intake.mjs'
 import {
   applyPeerResearch,
-  type PublicCompanyProfile
+  type PublicCompanyProfile,
+  publicProfileSource
 } from '@/lib/valuation/peer-research'
 import {
   executeDcf,
@@ -983,13 +984,14 @@ export function ValuationModelRunner({
           </div>
           <p className={styles.caption}>
             Fetch public company background and available SEC annual-report
-            references, then fill blank rationales with a cited draft. SEC is
-            preferred; if unavailable, a verified Wikidata / Wikipedia profile
-            is used and labeled. Existing text is preserved. Only issuer
-            identifiers and the valuation date are sent for lookup; uploaded
-            files stay in your browser. SEC coverage is limited to supported US
-            listings. Current profile metadata is labeled separately from
-            filings available by your valuation date.
+            references, then create cited drafts. If live SEC access fails, a
+            dated SEC source capture is used where available; otherwise a
+            verified Wikidata / Wikipedia profile is labeled. Untouched drafts
+            can refresh; your edits are preserved. Only issuer identifiers and
+            the valuation date are sent for lookup; uploaded files stay in your
+            browser. SEC coverage is limited to supported US listings. Current
+            profile metadata is labeled separately from filings available by
+            your valuation date.
           </p>
           {researchMessage ? (
             <p className={styles.status} role='status'>
@@ -1133,7 +1135,8 @@ export function ValuationModelRunner({
                                 >
                                   <strong>{label} SEC connection:</strong>{' '}
                                   {profile.secAccess.message}{' '}
-                                  {profile.secAccess.status === 'unavailable'
+                                  {profile.secAccess.status === 'unavailable' &&
+                                  !profile.sourceSnapshotAt
                                     ? 'The description below uses the labeled fallback source.'
                                     : ''}
                                   {profile.secAccess.retryAt
@@ -1169,6 +1172,7 @@ export function ValuationModelRunner({
                                       CIK {profile.cik}
                                     </p>
                                     <p>
+                                      Source: {publicProfileSource(profile)}.{' '}
                                       {profile.provider === 'Wikimedia'
                                         ? 'Public description'
                                         : 'SEC SIC ' +

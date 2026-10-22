@@ -4,8 +4,12 @@ import {
   extractBusinessTopics,
   type PublicCompanyProfile
 } from './peer-research.ts'
-import { createSecRequester, SecConnectionError } from './sec-transport.ts'
+import {
+  type SecProfileSnapshot,
+  selectSecProfileSnapshot
+} from './sec-profile-snapshots.ts'
 import bundledDirectory from './sec-ticker-directory.json' with { type: 'json' }
+import { createSecRequester, SecConnectionError } from './sec-transport.ts'
 import { fetchWikimediaPeerProfile } from './wiki-peer-research.ts'
 
 type TickerEntry = {
@@ -199,7 +203,10 @@ export function extractBusinessExcerpt(html: string, form: string) {
     const paragraph = paragraphs.find(
       (line) =>
         line.length >= 100 &&
-        !/forward-looking|table of contents/i.test(line) &&
+        !/forward-looking|table of contents|trade names|service marks/i.test(
+          line
+        ) &&
+        !/^(?:unless\b|as used\b|references? to\b)/i.test(line) &&
         /\b(?:manufactur\w*|produc\w*|provid\w*|develop\w*|suppl\w*|speciali\w*|operat\w*|customers?|segments?|solutions?)\b/i.test(
           line
         )
@@ -227,6 +234,7 @@ export async function fetchPublicPeerProfile(
     skipCache?: boolean
     tickerFallback?: unknown
     userAgent?: string
+    secSnapshot?: SecProfileSnapshot | false
   } = {}
 ): Promise<PublicCompanyProfile> {
   const { issuerId, asOf } = validatePeerRequest(issuerInput, dateInput)
@@ -309,30 +317,37 @@ export async function fetchPublicPeerProfile(
     directory = await tickerPending
   }
   const resolved = resolveSecIssuer(issuerId, directory.entries)
+  const snapshot =
+    options.secSnapshot === false
+      ? undefined
+      : selectSecProfileSnapshot(resolved, issuerId, asOf, options.secSnapshot)
   const profileUrl = `https://data.sec.gov/submissions/CIK${resolved.cik}.json`
   let profileText: string
   try {
     profileText = await request(profileUrl)
-  } catch (error) {
-    const profile = await fetchWikimediaPeerProfile(resolved, issuerId, asOf, {
-      fetcher,
-      directoryRetrievedAt: directory.capturedAt || new Date().toISOString()
-    })
+  } catch (err) {
+    const profile =
+      snapshot ??
+      (await fetchWikimediaPeerProfile(resolved, issuerId, asOf, {
+        fetcher,
+        directoryRetrievedAt: directory.capturedAt || new Date().toISOString()
+      }))
     profile.secAccess = {
       status: 'unavailable',
       stage: 'issuer-profile',
       code:
-        error instanceof SecConnectionError
-          ? error.code
-          : 'SEC_CONNECTION_ERROR',
+        err instanceof SecConnectionError ? err.code : 'SEC_CONNECTION_ERROR',
       httpStatus:
-        error instanceof SecConnectionError ? error.httpStatus : undefined,
-      retryAt: error instanceof SecConnectionError ? error.retryAt : undefined,
+        err instanceof SecConnectionError ? err.httpStatus : undefined,
+      retryAt: err instanceof SecConnectionError ? err.retryAt : undefined,
       checkedAt: new Date().toISOString(),
       contactConfigured: transport.contactConfigured,
       filingContentRetrieved: false,
       message:
-        error instanceof Error ? error.message : 'SEC issuer lookup failed.'
+        (err instanceof Error ? err.message : 'SEC issuer lookup failed.') +
+        (snapshot
+          ? ` Displaying the official SEC filing captured ${snapshot.sourceSnapshotAt!.slice(0, 10)}.`
+          : '')
     }
     if (!options.skipCache) {
       if (cache.size >= 200) cache.delete(cache.keys().next().value!)
@@ -359,7 +374,9 @@ export async function fetchPublicPeerProfile(
     ? data.addresses.business
     : undefined
   const warnings: string[] = []
-  const profile: PublicCompanyProfile = {
+  const profile: PublicCompanyProfile & {
+    secAccess: NonNullable<PublicCompanyProfile['secAccess']>
+  } = {
     issuerId,
     cik: resolved.cik,
     name: data.name,
@@ -382,18 +399,18 @@ export async function fetchPublicPeerProfile(
     informationDate: asOf,
     retrievedAt: new Date().toISOString(),
     directoryRetrievedAt: directory.capturedAt,
-    warnings
-  }
-  profile.secAccess = {
-    status: 'no-annual-filing',
-    stage: 'issuer-profile',
-    code: 'SEC_PROFILE_AVAILABLE',
-    httpStatus: 200,
-    checkedAt: new Date().toISOString(),
-    contactConfigured: transport.contactConfigured,
-    filingContentRetrieved: false,
-    message:
-      'SEC issuer profile retrieved; no eligible annual filing has been verified yet.'
+    warnings,
+    secAccess: {
+      status: 'no-annual-filing',
+      stage: 'issuer-profile',
+      code: 'SEC_PROFILE_AVAILABLE',
+      httpStatus: 200,
+      checkedAt: new Date().toISOString(),
+      contactConfigured: transport.contactConfigured,
+      filingContentRetrieved: false,
+      message:
+        'SEC issuer profile retrieved; no eligible annual filing has been verified yet.'
+    }
   }
   const filing = selectAnnualFiling(
     jsonObject(data.filings) ? data.filings.recent : undefined,
@@ -431,29 +448,36 @@ export async function fetchPublicPeerProfile(
         warnings.push(
           'A reliable business-section excerpt could not be extracted. Open the filing to review products and end markets.'
         )
-    } catch (error) {
+    } catch (err) {
+      if (snapshot?.filing?.url === profile.filing.url) {
+        profile.filing = { ...snapshot.filing }
+        profile.businessTopics = snapshot.businessTopics
+        profile.sourceSnapshotAt = snapshot.sourceSnapshotAt
+        warnings.push(...snapshot.warnings)
+      }
       profile.secAccess = {
         ...profile.secAccess,
         status: 'partial',
         stage: 'annual-report',
         code:
-          error instanceof SecConnectionError
-            ? error.code
-            : 'SEC_CONNECTION_ERROR',
+          err instanceof SecConnectionError ? err.code : 'SEC_CONNECTION_ERROR',
         httpStatus:
-          error instanceof SecConnectionError ? error.httpStatus : undefined,
-        retryAt:
-          error instanceof SecConnectionError ? error.retryAt : undefined,
+          err instanceof SecConnectionError ? err.httpStatus : undefined,
+        retryAt: err instanceof SecConnectionError ? err.retryAt : undefined,
         checkedAt: new Date().toISOString(),
         filingContentRetrieved: false,
         message:
-          error instanceof Error
-            ? error.message
-            : 'SEC filing text retrieval failed.'
+          (err instanceof Error
+            ? err.message
+            : 'SEC filing text retrieval failed.') +
+          (profile.sourceSnapshotAt
+            ? ` Displaying the official SEC filing captured ${profile.sourceSnapshotAt.slice(0, 10)}.`
+            : '')
       }
-      warnings.push(
-        'The filing text could not be retrieved. The SEC profile and filing reference are available; review the filing before using the draft.'
-      )
+      if (!profile.sourceSnapshotAt)
+        warnings.push(
+          'The filing text could not be retrieved. The SEC profile and filing reference are available; review the filing before using the draft.'
+        )
     }
   } else
     warnings.push(

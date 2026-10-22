@@ -9,6 +9,7 @@ export type PublicCompanyProfile = {
   businessAddress: string
   profileUrl: string
   retrievedAt: string
+  sourceSnapshotAt?: string
   directoryRetrievedAt?: string
   provider?: 'SEC' | 'Wikimedia'
   identityVerification?: string
@@ -57,6 +58,12 @@ export type PeerComparison = {
   targetValue?: number | null
   peerValue?: number | null
   period?: string
+}
+
+export function publicProfileSource(profile: PublicCompanyProfile) {
+  return profile.sourceSnapshotAt
+    ? `SEC capture from ${profile.sourceSnapshotAt.slice(0, 10)}`
+    : profile.provider || 'SEC'
 }
 
 /** Conservative subjects found in source text, not inferred business exposure. */
@@ -158,7 +165,7 @@ export function draftPeerRationale(
     'Review product mix, end markets, growth, margins, leverage and accounting adjustments before inclusion.'
   )
   parts.push(
-    `Sources: target ${target.provider || 'SEC'} profile ${target.profileUrl}; peer ${peer.provider || 'SEC'} profile ${peer.profileUrl}. Profiles retrieved ${peer.retrievedAt.slice(0, 10)} contain current metadata, not a historical profile snapshot.`
+    `Sources: target ${publicProfileSource(target)} profile ${target.profileUrl}; peer ${publicProfileSource(peer)} profile ${peer.profileUrl}. Profiles retrieved ${peer.retrievedAt.slice(0, 10)} contain current metadata, not a historical profile snapshot.`
   )
   for (const [label, profile] of [
     ['Target', target],

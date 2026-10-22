@@ -34,7 +34,7 @@ const annuals = {
 }
 const business =
   'We manufacture synthetic materials for industrial customers and develop specialty products for electronic applications. Our company serves customers through a network of manufacturing facilities and distribution partners around the world.'
-const html = `<script>Untrusted content</script><p>Table of contents</p><p>Item 1. Business</p><p>Item 1A. Risk Factors</p><h2>Item 1. Business</h2><p>Overview</p><p>${business}</p><p>${'Other business disclosures. '.repeat(30)}</p><p>Item 1A. Risk Factors</p>`
+const html = `<script>Untrusted content</script><p>Table of contents</p><p>Item 1. Business</p><p>Item 1A. Risk Factors</p><h2>Item 1. Business</h2><p>Unless the context otherwise indicates or requires, all product names, trade names, trademarks, service marks or logos used in this Annual Report are part of our intellectual property.</p><p>Overview</p><p>${business}</p><p>${'Other business disclosures. '.repeat(30)}</p><p>Item 1A. Risk Factors</p>`
 function profile(issuerId, sic = '2810') {
   return {
     issuerId,
