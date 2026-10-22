@@ -12,8 +12,13 @@ Analyst entry routes to the same workspace.
 3. Peer Data: candidate peers, numerator and denominator values, financial
    definitions, financial period ends and market snapshot dates. DCF does not
    require this section.
-4. Forward Estimates: optional dated consensus references, with explicit fiscal
-   horizons. FY1 is not relabeled NTM.
+4. Forward Estimates: target and peer forecasts are required for forward relative
+   valuation, but this separate upload is unnecessary if Peer Data already
+   includes them. They remain optional for DCF and trailing relative valuation.
+   Supply the selected metric for the target and at least three peers on the same
+   FY, CY or NTM basis and period end, with issuer identifiers, estimate dates,
+   currencies, units and definitions. Forward multiples alone do not supply the
+   underlying earnings estimates and periods. FY1 is not relabeled NTM.
 
 Each area has its own file input, drop target, paste dialog, checklist, CSV
 template and file list. A file's category remains in its manifest and sources.

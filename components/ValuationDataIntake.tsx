@@ -85,7 +85,9 @@ function UploadZone({
   const label =
     section.id === 'peers' && mode === 'dcf'
       ? 'Not needed for DCF'
-      : section.label
+      : section.id === 'forward' && mode === 'dcf'
+        ? 'Optional for DCF'
+        : section.label
 
   return (
     <section
@@ -820,7 +822,8 @@ export function ValuationDataIntake() {
             <strong>Download in this order</strong>
             <p>
               Start with historical financials and capital structure. Add peers
-              for relative valuation. Forward estimates are optional.
+              for relative valuation. Forward estimates are optional for DCF and
+              trailing relative valuation.
             </p>
             <small>
               {requiredSections.length - missingSections.length} of{' '}
@@ -828,6 +831,29 @@ export function ValuationDataIntake() {
               still need mapping and source review.
             </small>
           </div>
+          {mode !== 'dcf' ? (
+            <aside
+              className={styles.notice}
+              aria-label='Forward relative valuation requirements'
+            >
+              <strong>
+                Using forward multiples? Include target and peer forecasts.
+              </strong>
+              <p>
+                Provide the forecast metric for the target and at least three
+                peers on the same FY, CY or NTM basis and period end. For
+                example, FY2027 EV/EBITDA needs FY2027 EBITDA for every company.
+              </p>
+              <p>
+                Include each issuer&apos;s identifier, period end, estimate
+                as-of date, currency, units and metric definition. Add these
+                forecasts in Peer Data or Forward Estimates; one upload is
+                enough if your peer screen already includes them. A forward
+                multiple alone does not supply the underlying forecast and its
+                period.
+              </p>
+            </aside>
+          ) : null}
           <div className={styles.uploadGrid}>
             {sections.map((section, index) => (
               <UploadZone
