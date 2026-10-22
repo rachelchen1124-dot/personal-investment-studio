@@ -113,6 +113,7 @@ export function ValuationModelRunner({
   const [exporting, setExporting] = React.useState(false)
   const [exportError, setExportError] = React.useState('')
   const [researchBusy, setResearchBusy] = React.useState(false)
+  const [researchingIds, setResearchingIds] = React.useState<string[]>([])
   const [researchMessage, setResearchMessage] = React.useState('')
   const [researchErrors, setResearchErrors] = React.useState<
     Record<string, string>
@@ -176,7 +177,13 @@ export function ValuationModelRunner({
       const response = await fetch(
         '/api/valuation/public-background?' +
           new URLSearchParams({ issuerId, asOf: context.valuationDate }),
-        { signal: controller.signal, cache: 'no-store' }
+        {
+          signal: AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(55_000)
+          ]),
+          cache: 'no-store'
+        }
       )
       const payload = (await response.json()) as {
         error?: string
@@ -191,7 +198,7 @@ export function ValuationModelRunner({
           payload.error || 'The public issuer identity could not be verified.'
         )
       const result = payload.profile as PublicCompanyProfile
-      if (payload.researchVersion !== 'public-background-v3')
+      if (payload.researchVersion !== 'public-background-v4')
         throw new Error(
           'The public research response could not be verified. Your existing rationale has been preserved.'
         )
@@ -199,58 +206,89 @@ export function ValuationModelRunner({
       return result
     }
     let completed = 0
+    let failed = 0
+    let processed = 0
     try {
       const target = await profile(context.issuerId)
-      for (const issuerId of issuerIds) {
+      async function researchOne(issuerId: string) {
         if (controller.signal.aborted) return
+        setResearchingIds((current) => [...current, issuerId])
         try {
           const peer = await profile(issuerId)
-          const item = preview.peers.find(
-            (candidate) => candidate.issuerId === issuerId
-          )!
           if (controller.signal.aborted) return
-          setSettings((current) => ({
-            ...current,
-            peerSelections: {
-              ...current.peerSelections,
-              [issuerId]: applyPeerResearch(
-                current.peerSelections[issuerId],
-                target,
-                peer,
-                {
-                  field: preview.field,
-                  targetValue: preview.target?.value,
-                  peerValue: item.metric?.value,
-                  period: item.metric?.period.endDate
-                }
-              )
+          setSettings((current) => {
+            // The user may change the multiple or edit a rationale while the
+            // public request is running. Compare against the latest state.
+            const latest = peerPreview(model, current.multiple)
+            const item = latest.peers.find(
+              (candidate) => candidate.issuerId === issuerId
+            )
+            return {
+              ...current,
+              peerSelections: {
+                ...current.peerSelections,
+                [issuerId]: applyPeerResearch(
+                  current.peerSelections[issuerId],
+                  target,
+                  peer,
+                  {
+                    field: latest.field,
+                    targetValue: latest.target?.value,
+                    peerValue: item?.metric?.value,
+                    period: item?.metric?.period.endDate
+                  }
+                )
+              }
             }
-          }))
+          })
           completed++
-          setResearchMessage(
-            `Public information fetched for ${completed} of ${issuerIds.length} requested peers. Existing rationales are preserved; review any filled drafts below.`
-          )
         } catch (err) {
           if (controller.signal.aborted) return
+          failed++
           setResearchErrors((current) => ({
             ...current,
             [issuerId]:
-              err instanceof Error
-                ? err.message
-                : 'Public information could not be fetched.'
+              err instanceof Error && err.name === 'TimeoutError'
+                ? 'This public lookup timed out. Your text is preserved; retry this peer individually.'
+                : err instanceof Error
+                  ? err.message
+                  : 'Public information could not be fetched.'
           }))
+        } finally {
+          processed++
+          if (!controller.signal.aborted) {
+            setResearchingIds((current) =>
+              current.filter((id) => id !== issuerId)
+            )
+            setResearchMessage(
+              `Checked ${processed} of ${issuerIds.length} peers: ${completed} retrieved, ${failed} unavailable. Drafts appear below as each lookup completes.`
+            )
+          }
         }
       }
-      setResearchMessage(
-        `Fetched public information for ${completed} of ${issuerIds.length} peers. ${completed < issuerIds.length ? 'See the peer-specific messages below. ' : ''}Review sources and draft rationales before calculating.`
-      )
+      // Bounded concurrency avoids a long, serial bulk lookup while respecting
+      // provider limits. A failure for one peer cannot stop the other peers.
+      const queue = [...new Set(issuerIds)]
+      async function worker() {
+        while (queue.length && !controller.signal.aborted)
+          await researchOne(queue.shift()!)
+      }
+      await Promise.all([worker(), worker()])
+      if (!controller.signal.aborted)
+        setResearchMessage(
+          `Fetched public information for ${completed} of ${issuerIds.length} peers.${failed ? ` ${failed} unavailable; retry using the button in the affected row.` : ''} Existing text is preserved. Review the cited drafts before calculating.`
+        )
     } catch (err) {
       if (!controller.signal.aborted)
         setResearchMessage(
           `Target issuer lookup: ${err instanceof Error ? err.message : 'Public SEC information is unavailable.'}`
         )
     } finally {
-      if (!controller.signal.aborted) setResearchBusy(false)
+      if (researchController.current === controller) {
+        setResearchBusy(false)
+        setResearchingIds([])
+        researchController.current = null
+      }
     }
   }
   function run(method: Method) {
@@ -919,6 +957,20 @@ export function ValuationModelRunner({
                 ? 'Fetching public information…'
                 : 'Fetch public information for selected peers'}
             </button>
+            {researchBusy ? (
+              <button
+                type='button'
+                className={styles.secondary}
+                onClick={() => {
+                  researchController.current?.abort()
+                  setResearchMessage(
+                    'Lookup stopped. Completed drafts and your existing text are preserved. You can retry the remaining peers.'
+                  )
+                }}
+              >
+                Stop lookup
+              </button>
+            ) : null}
           </div>
           <p className={styles.caption}>
             Fetch public company background and available SEC annual-report
@@ -1035,7 +1087,11 @@ export function ValuationModelRunner({
                           disabled={researchBusy || Boolean(peer.reason)}
                           onClick={() => researchPeers([peer.issuerId])}
                         >
-                          Fetch public information
+                          {researchingIds.includes(peer.issuerId)
+                            ? 'Fetching this company…'
+                            : research
+                              ? 'Refresh public information'
+                              : 'Fetch public information'}
                         </button>
                         {researchErrors[peer.issuerId] ? (
                           <p className={styles.error} role='alert'>
@@ -1151,6 +1207,12 @@ export function ValuationModelRunner({
                                         </p>
                                       </>
                                     ) : null}
+                                    {profile.businessTopics?.length ? (
+                                      <p>
+                                        Activities mentioned in the source:{' '}
+                                        {profile.businessTopics.join(', ')}.
+                                      </p>
+                                    ) : null}
                                     {profile.warnings.map((warning) => (
                                       <p key={warning}>{warning}</p>
                                     ))}
@@ -1159,26 +1221,39 @@ export function ValuationModelRunner({
                               })}
                             </details>
                             {!research.applied ? (
-                              <button
-                                type='button'
-                                className={styles.secondary}
-                                onClick={() =>
-                                  set('peerSelections', {
-                                    ...settings.peerSelections,
-                                    [peer.issuerId]: {
-                                      ...selection!,
-                                      rationale: research.draft,
-                                      research: {
-                                        ...research,
-                                        applied: true,
-                                        reviewed: false
+                              <>
+                                <details className={styles.hints}>
+                                  <summary>
+                                    Preview fetched rationale for{' '}
+                                    {peer.issuerId}
+                                  </summary>
+                                  {research.draft
+                                    .split('\n\n')
+                                    .map((paragraph, index) => (
+                                      <p key={index}>{paragraph}</p>
+                                    ))}
+                                </details>
+                                <button
+                                  type='button'
+                                  className={styles.secondary}
+                                  onClick={() =>
+                                    set('peerSelections', {
+                                      ...settings.peerSelections,
+                                      [peer.issuerId]: {
+                                        ...selection!,
+                                        rationale: research.draft,
+                                        research: {
+                                          ...research,
+                                          applied: true,
+                                          reviewed: false
+                                        }
                                       }
-                                    }
-                                  })
-                                }
-                              >
-                                Use fetched draft for {peer.issuerId}
-                              </button>
+                                    })
+                                  }
+                                >
+                                  Use fetched draft for {peer.issuerId}
+                                </button>
+                              </>
                             ) : (
                               <label className={styles.confirm}>
                                 <input

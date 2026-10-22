@@ -6,7 +6,7 @@ import {
 } from '@/lib/valuation/public-background-server'
 
 export const config = { maxDuration: 90 }
-const version = 'public-background-v3'
+const version = 'public-background-v4'
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,12 +16,10 @@ export default async function handler(
   res.setHeader('X-Valuation-Research-Version', version)
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET')
-    return res
-      .status(405)
-      .json({
-        researchVersion: version,
-        error: 'Use GET for public issuer research.'
-      })
+    return res.status(405).json({
+      researchVersion: version,
+      error: 'Use GET for public issuer research.'
+    })
   }
   let request: ReturnType<typeof validatePeerRequest>
   try {
@@ -45,14 +43,12 @@ export default async function handler(
       status: 'unavailable',
       error: err instanceof Error ? err.message : 'Unknown source error'
     })
-    return res
-      .status(502)
-      .json({
-        researchVersion: version,
-        error:
-          err instanceof Error
-            ? err.message
-            : 'Public background could not be retrieved. Your existing rationale has been preserved.'
-      })
+    return res.status(502).json({
+      researchVersion: version,
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Public background could not be retrieved. Your existing rationale has been preserved.'
+    })
   }
 }

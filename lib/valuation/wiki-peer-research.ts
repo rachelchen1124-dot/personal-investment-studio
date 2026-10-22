@@ -1,11 +1,17 @@
 import type { PublicCompanyProfile } from './peer-research.ts'
+import { extractBusinessTopics } from './peer-research.ts'
 import { defaultSecUserAgent } from './sec.ts'
 
 type ObjectValue = Record<string, unknown>
 const object = (value: unknown): value is ObjectValue =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
-const companyName = (value: string) =>
+const searchName = (value: string) =>
   value
+    .replace(/\/[A-Z]{2,3}\/?$/i, '')
+    .replaceAll(/\s+/g, ' ')
+    .trim()
+const plainCompanyName = (value: string) =>
+  searchName(value)
     .toLowerCase()
     .replaceAll('&', 'and')
     .replaceAll(/[^a-z0-9 ]/g, ' ')
@@ -16,6 +22,8 @@ const companyName = (value: string) =>
       ''
     )
     .replaceAll(/\s+/g, ' ')
+const companyName = (value: string) =>
+  plainCompanyName(value).split(/\s+/).filter(Boolean).sort().join(' ')
 function claimValues(entity: ObjectValue, property: string) {
   const claims = object(entity.claims) ? entity.claims[property] : undefined
   if (!Array.isArray(claims)) return []
@@ -88,17 +96,25 @@ export function wikiListingMatches(
 }
 
 function excerpt(text: string) {
-  const paragraphs = text
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-  const sentences = text.split(/(?<=[.!?])\s+(?=[A-Z])/)
+  const sentences = text
+    .replace(/, formerly known as [^,]+,/gi, ',')
+    .split(/(?<=[.!?])\s+(?=[A-Z])/)
+    .filter(
+      (line) =>
+        !/\b(until\s+\d{4}|formerly|previously|used to|was the|sold|acquired|founded|established)\b/i.test(
+          line
+        )
+    )
   const useful =
     sentences.find((line) =>
-      /products include|business segments|manufactur/i.test(line)
+      /chemical|materials?|adhesive|coating|polymer|additive|business segments|products include/i.test(
+        line
+      )
     ) ||
-    paragraphs.find((line) => /specialty|materials solutions/i.test(line)) ||
-    paragraphs[0] ||
+    sentences.find((line) =>
+      /specialty|materials|chemical|coatings/i.test(line)
+    ) ||
+    sentences[0] ||
     ''
   const words = useful.split(/\s+/)
   return words.slice(0, 25).join(' ') + (words.length > 25 ? '…' : '')
@@ -156,131 +172,204 @@ export async function fetchWikimediaPeerProfile(
       await reader.cancel()
     }
   }
-  const search = await getJson('www.wikidata.org', {
-    action: 'wbsearchentities',
-    search: companyName(listing.name),
-    language: 'en',
-    limit: '3'
-  })
-  const candidates =
-    object(search) && Array.isArray(search.search) ? search.search : []
-  const ids = candidates.flatMap((candidate: unknown) =>
+  // Preserve a legal name AND try its short form. Removing "Corp" alone loses
+  // Albemarle to geographic names; retaining "Inc" alone misses other issuers.
+  const queries = new Set([
+    searchName(listing.name),
+    plainCompanyName(listing.name)
+  ])
+  const inverted = searchName(listing.name).match(
+    /^(.+?)\s+((?:[A-Z]\s+)+)(?:CO|CORP|INC)\.?$/i
+  )
+  if (inverted)
+    queries.add(
+      inverted[2]!.trim().replaceAll(/\s+/g, '.') + '. ' + inverted[1]
+    )
+  const searches = await Promise.allSettled(
+    [...queries].map((search) =>
+      getJson('www.wikidata.org', {
+        action: 'wbsearchentities',
+        search,
+        language: 'en',
+        limit: '5'
+      })
+    )
+  )
+  if (searches.every((item) => item.status === 'rejected'))
+    throw (searches[0] as PromiseRejectedResult).reason
+  const candidates = searches.flatMap((item) =>
+    item.status === 'fulfilled' &&
+    object(item.value) &&
+    Array.isArray(item.value.search)
+      ? item.value.search
+      : []
+  )
+  const initialIds = candidates.flatMap((candidate: unknown) =>
     object(candidate) &&
     typeof candidate.id === 'string' &&
     /^Q\d+$/.test(candidate.id)
       ? [candidate.id]
       : []
   )
-  if (!ids.length)
-    throw new Error(
-      'No public company background could be matched. Keep a manual rationale for this peer.'
-    )
-  const raw = await getJson('www.wikidata.org', {
-    action: 'wbgetentities',
-    ids: ids.join('|'),
-    props: 'labels|descriptions|aliases|claims|sitelinks',
-    languages: 'en',
-    sitefilter: 'enwiki'
-  })
-  const entities = object(raw) && object(raw.entities) ? raw.entities : {}
-  const verified: PublicCompanyProfile[] = []
-  for (const id of ids) {
-    const entity = entities[id]
-    if (!object(entity)) continue
-    const ciks = claimValues(entity, 'P5531')
-    const cikMatch = ciks.some(
-      (value) =>
-        /^\d{1,10}$/.test(value) && value.padStart(10, '0') === listing.cik
-    )
-    if (ciks.length && !cikMatch) continue
-    const name = english(entity, 'labels')
-    const title = articleTitle(entity)
-    const aliasEntries =
-      object(entity.aliases) && Array.isArray(entity.aliases.en)
-        ? entity.aliases.en
-        : []
-    const aliases = aliasEntries.flatMap((item: unknown) =>
-      object(item) && typeof item.value === 'string' ? [item.value] : []
-    )
-    if (
-      !cikMatch &&
-      ![name, title, ...aliases].some(
-        (value) => companyName(value) === companyName(listing.name)
-      )
-    )
-      continue
-    let description = '',
-      descriptionUrl = '',
-      listingMatch = false
-    if (title) {
-      const article = await getJson('en.wikipedia.org', {
-        action: 'query',
-        titles: title,
-        prop: 'revisions|extracts|info',
-        rvprop: 'ids|timestamp|content',
-        rvslots: 'main',
-        explaintext: '1',
-        exintro: '1',
-        inprop: 'url',
-        formatversion: '2'
-      })
-      const query =
-        object(article) && object(article.query) ? article.query : {}
-      const page = Array.isArray(query.pages) ? query.pages[0] : undefined
-      if (object(page)) {
-        const revision = Array.isArray(page.revisions)
-          ? page.revisions[0]
-          : undefined
-        const slot =
-          object(revision) && object(revision.slots)
-            ? revision.slots.main
-            : undefined
-        const text =
-          object(slot) && typeof slot.content === 'string' ? slot.content : ''
-        listingMatch = wikiListingMatches(
-          text,
-          listing.ticker,
-          listing.exchange
-        )
-        if (typeof page.extract === 'string')
-          description = excerpt(page.extract)
-        if (
-          object(revision) &&
-          typeof revision.revid === 'number' &&
-          Number.isSafeInteger(revision.revid) &&
-          revision.revid > 0
-        )
-          descriptionUrl =
-            'https://en.wikipedia.org/w/index.php?oldid=' + revision.revid
-      }
-    }
-    if (!cikMatch && !listingMatch) continue
-    verified.push({
-      issuerId,
-      cik: listing.cik,
-      name: name || listing.name,
-      ticker: listing.ticker,
-      exchange: listing.exchange,
-      sic: '',
-      industry:
-        english(entity, 'descriptions') ||
-        'Industry not established by this source',
-      businessAddress: '',
-      provider: 'Wikimedia',
-      profileUrl: 'https://www.wikidata.org/wiki/' + id,
-      retrievedAt: new Date().toISOString(),
-      informationDate: asOf,
-      directoryRetrievedAt: options.directoryRetrievedAt,
-      identityVerification: cikMatch
-        ? 'Matching CIK in Wikidata and the SEC ticker directory'
-        : 'Matching SEC company name and Wikipedia infobox exchange / ticker',
-      businessDescription: description || english(entity, 'descriptions'),
-      businessDescriptionUrl:
-        descriptionUrl || 'https://www.wikidata.org/wiki/' + id,
-      warnings: [
-        'Direct SEC issuer retrieval is unavailable on this host. Current company background comes from Wikidata / Wikipedia; no SEC annual filing was verified in this lookup. Review primary issuer disclosures before inclusion.'
-      ]
+  async function listingCandidates() {
+    // SEC names can be abbreviated or inverted ("FULLER H B CO"). The exact
+    // exchange and ticker discover an article; the same identity checks below
+    // must still verify the company. Search results alone never verify it.
+    const search = await getJson('en.wikipedia.org', {
+      action: 'query',
+      list: 'search',
+      srsearch: `"${listing.exchange === 'Nasdaq' ? 'NASDAQ' : listing.exchange}" "${listing.ticker}"`,
+      srnamespace: '0',
+      srlimit: '3',
+      formatversion: '2'
     })
+    const query = object(search) && object(search.query) ? search.query : {}
+    const titles = Array.isArray(query.search)
+      ? query.search.flatMap((item: unknown) =>
+          object(item) && typeof item.title === 'string' ? [item.title] : []
+        )
+      : []
+    if (!titles.length) return []
+    const pages = await getJson('en.wikipedia.org', {
+      action: 'query',
+      titles: titles.join('|'),
+      prop: 'pageprops',
+      ppprop: 'wikibase_item',
+      formatversion: '2'
+    })
+    const result = object(pages) && object(pages.query) ? pages.query : {}
+    return Array.isArray(result.pages)
+      ? result.pages.flatMap((page: unknown) => {
+          const id =
+            object(page) && object(page.pageprops)
+              ? page.pageprops.wikibase_item
+              : undefined
+          return typeof id === 'string' && /^Q\d+$/.test(id) ? [id] : []
+        })
+      : []
+  }
+  async function verifyCandidates(ids: string[]) {
+    if (!ids.length) return []
+    const raw = await getJson('www.wikidata.org', {
+      action: 'wbgetentities',
+      ids: ids.join('|'),
+      props: 'labels|descriptions|aliases|claims|sitelinks',
+      languages: 'en',
+      sitefilter: 'enwiki'
+    })
+    const entities = object(raw) && object(raw.entities) ? raw.entities : {}
+    const verified: PublicCompanyProfile[] = []
+    for (const id of ids) {
+      const entity = entities[id]
+      if (!object(entity)) continue
+      const ciks = claimValues(entity, 'P5531')
+      const cikMatch = ciks.some(
+        (value) =>
+          /^\d{1,10}$/.test(value) && value.padStart(10, '0') === listing.cik
+      )
+      if (ciks.length && !cikMatch) continue
+      const name = english(entity, 'labels')
+      const title = articleTitle(entity)
+      const aliasEntries =
+        object(entity.aliases) && Array.isArray(entity.aliases.en)
+          ? entity.aliases.en
+          : []
+      const aliases = aliasEntries.flatMap((item: unknown) =>
+        object(item) && typeof item.value === 'string' ? [item.value] : []
+      )
+      if (
+        !cikMatch &&
+        ![name, title, ...aliases].some(
+          (value) => companyName(value) === companyName(listing.name)
+        )
+      )
+        continue
+      let description = '',
+        businessTopics: string[] = [],
+        descriptionUrl = '',
+        listingMatch = false
+      if (title) {
+        const article = await getJson('en.wikipedia.org', {
+          action: 'query',
+          titles: title,
+          prop: 'revisions|extracts|info',
+          rvprop: 'ids|timestamp|content',
+          rvslots: 'main',
+          explaintext: '1',
+          exintro: '1',
+          inprop: 'url',
+          formatversion: '2'
+        })
+        const query =
+          object(article) && object(article.query) ? article.query : {}
+        const page = Array.isArray(query.pages) ? query.pages[0] : undefined
+        if (object(page)) {
+          const revision = Array.isArray(page.revisions)
+            ? page.revisions[0]
+            : undefined
+          const slot =
+            object(revision) && object(revision.slots)
+              ? revision.slots.main
+              : undefined
+          const text =
+            object(slot) && typeof slot.content === 'string' ? slot.content : ''
+          listingMatch = wikiListingMatches(
+            text,
+            listing.ticker,
+            listing.exchange
+          )
+          if (typeof page.extract === 'string') {
+            description = excerpt(page.extract)
+            businessTopics = extractBusinessTopics(page.extract)
+          }
+          if (
+            object(revision) &&
+            typeof revision.revid === 'number' &&
+            Number.isSafeInteger(revision.revid) &&
+            revision.revid > 0
+          )
+            descriptionUrl =
+              'https://en.wikipedia.org/w/index.php?oldid=' + revision.revid
+        }
+      }
+      if (!cikMatch && !listingMatch) continue
+      verified.push({
+        issuerId,
+        cik: listing.cik,
+        name: name || listing.name,
+        ticker: listing.ticker,
+        exchange: listing.exchange,
+        sic: '',
+        industry:
+          english(entity, 'descriptions') ||
+          'Industry not established by this source',
+        businessAddress: '',
+        provider: 'Wikimedia',
+        profileUrl: 'https://www.wikidata.org/wiki/' + id,
+        retrievedAt: new Date().toISOString(),
+        informationDate: asOf,
+        directoryRetrievedAt: options.directoryRetrievedAt,
+        identityVerification: cikMatch
+          ? 'Matching CIK in Wikidata and the SEC ticker directory'
+          : 'Matching SEC company name and Wikipedia infobox exchange / ticker',
+        businessDescription: description || english(entity, 'descriptions'),
+        businessTopics,
+        businessDescriptionUrl:
+          descriptionUrl || 'https://www.wikidata.org/wiki/' + id,
+        warnings: [
+          'Direct SEC issuer retrieval is unavailable on this host. Current company background comes from Wikidata / Wikipedia; no SEC annual filing was verified in this lookup. Review primary issuer disclosures before inclusion.'
+        ]
+      })
+    }
+    return verified
+  }
+  const seen = new Set(initialIds)
+  let verified = await verifyCandidates([...seen])
+  if (!verified.length) {
+    const fallbackIds = [...new Set(await listingCandidates())].filter(
+      (id) => !seen.has(id)
+    )
+    verified = await verifyCandidates(fallbackIds)
   }
   if (verified.length !== 1)
     throw new Error(

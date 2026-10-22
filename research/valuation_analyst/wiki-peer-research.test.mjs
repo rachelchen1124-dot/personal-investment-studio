@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { fetchPublicPeerProfile } from '../../lib/valuation/peer-research-server.ts'
-import { draftPeerRationale } from '../../lib/valuation/peer-research.ts'
+import {
+  draftPeerRationale,
+  extractBusinessTopics
+} from '../../lib/valuation/peer-research.ts'
 import {
   fetchWikimediaPeerProfile,
   wikiListingMatches
@@ -20,6 +23,7 @@ function fetcherFor({
   cik,
   content = currentListing,
   label = 'Synthetic Materials',
+  extract = 'Synthetic Materials manufactures specialty products for industrial customers. Its products include materials for electronic applications and other industrial end markets, with operations and distribution partners in several countries.',
   ambiguous = false
 } = {}) {
   return async (url) => {
@@ -54,8 +58,7 @@ function fetcherFor({
         pages: [
           {
             title: label,
-            extract:
-              'Synthetic Materials manufactures specialty products for industrial customers. Its products include materials for electronic applications and other industrial end markets, with operations and distribution partners in several countries.',
+            extract,
             revisions: [
               {
                 revid: 12345,
@@ -82,6 +85,138 @@ test('public listing checks use the current company infobox and an exact exchang
     ),
     false
   )
+})
+
+test('discovery preserves legal company names when a short name finds geographic names', async () => {
+  const searched = []
+  const base = fetcherFor({ label: 'Synthetic Corporation' })
+  const profile = await fetchWikimediaPeerProfile(
+    { ...listing, name: 'SYNTHETIC CORP' },
+    'NYSE:DEMO',
+    '2026-10-21',
+    {
+      fetcher: async (url) => {
+        const query = new URL(url).searchParams
+        if (query.get('action') === 'wbsearchentities') {
+          searched.push(query.get('search'))
+          return Response.json({
+            search:
+              query.get('search') === 'SYNTHETIC CORP'
+                ? [{ id: 'Q123' }]
+                : [{ id: 'Q999' }]
+          })
+        }
+        return base(url)
+      }
+    }
+  )
+  assert.ok(searched.includes('SYNTHETIC CORP'))
+  assert.ok(searched.includes('synthetic'))
+  assert.equal(profile.name, 'Synthetic Corporation')
+})
+
+test('inverted SEC initials resolve without accepting a different company or exchange', async () => {
+  const base = fetcherFor({
+    label: 'H.B. Synthetic',
+    content: '{{Infobox company|name=H.B. Synthetic|traded_as={{NYSE|DEMO}}}}'
+  })
+  const fetcher = async (url) => {
+    const query = new URL(url).searchParams
+    if (query.get('action') === 'wbsearchentities')
+      return Response.json({
+        search: query.get('search') === 'H.B. SYNTHETIC' ? [{ id: 'Q123' }] : []
+      })
+    return base(url)
+  }
+  const result = await fetchWikimediaPeerProfile(
+    { ...listing, name: 'SYNTHETIC H B CO' },
+    'NYSE:DEMO',
+    '2026-10-21',
+    { fetcher }
+  )
+  assert.equal(result.name, 'H.B. Synthetic')
+  await assert.rejects(
+    fetchWikimediaPeerProfile(
+      { ...listing, name: 'SYNTHETIC H B CO', exchange: 'Nasdaq' },
+      'NASDAQ:DEMO',
+      '2026-10-21',
+      { fetcher }
+    ),
+    /unique public company identity/
+  )
+})
+
+test('SEC domicile annotations do not become part of company discovery or matching', async () => {
+  const searched = []
+  const base = fetcherFor({ label: 'Synthetic Materials Inc.' })
+  const profile = await fetchWikimediaPeerProfile(
+    { ...listing, name: 'SYNTHETIC MATERIALS INC/DE/' },
+    'NYSE:DEMO',
+    '2026-10-21',
+    {
+      fetcher: async (url) => {
+        const query = new URL(url).searchParams
+        if (query.get('action') === 'wbsearchentities')
+          searched.push(query.get('search'))
+        return base(url)
+      }
+    }
+  )
+  assert.ok(searched.every((query) => !query.includes('/DE/')))
+  assert.equal(profile.name, 'Synthetic Materials Inc.')
+})
+
+test('a failed discovery query does not discard another verified result', async () => {
+  const base = fetcherFor()
+  const profile = await fetchWikimediaPeerProfile(
+    listing,
+    'NYSE:DEMO',
+    '2026-10-21',
+    {
+      fetcher: async (url) => {
+        const query = new URL(url).searchParams
+        if (query.get('search') === listing.name)
+          return new Response('', { status: 503 })
+        return base(url)
+      }
+    }
+  )
+  assert.equal(profile.name, 'Synthetic Materials')
+})
+
+test('current business excerpts and activity topics skip a disposed historical business', async () => {
+  const profile = await fetchWikimediaPeerProfile(
+    listing,
+    'NYSE:DEMO',
+    '2026-10-21',
+    {
+      fetcher: fetcherFor({
+        extract:
+          'Synthetic Materials is a specialty chemicals company. Until 2017, it was the manufacturer of lubricant additives. Its products include adhesives and coatings.'
+      })
+    }
+  )
+  assert.doesNotMatch(profile.businessDescription, /2017|lubricant/)
+  assert.deepEqual(profile.businessTopics, [
+    'specialty chemicals',
+    'coatings',
+    'adhesives'
+  ])
+  assert.equal(
+    extractBusinessTopics('No business activity disclosed.').length,
+    0
+  )
+  const draft = draftPeerRationale(
+    profile,
+    { ...profile, name: 'Synthetic Peer' },
+    { field: 'revenue' }
+  )
+  assert.match(
+    draft,
+    /both source descriptions mention specialty chemicals, coatings, adhesives/
+  )
+  assert.match(draft, /partial source descriptions/)
+  assert.doesNotMatch(draft, /lubricant/)
 })
 
 test('independent company background requires a matching CIK or both legal name and listing', async () => {
