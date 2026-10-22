@@ -16,7 +16,10 @@ import {
   workbookEntries,
   writeValuationXlsx
 } from '../../lib/valuation/write-workbook.ts'
-import { normalizeManual } from '../../lib/valuation/manual-intake.mjs'
+import {
+  normalizeManual,
+  reconcileManualInputs
+} from '../../lib/valuation/manual-intake.mjs'
 
 const context = {
   company: 'Synthetic automatic NTM QA',
@@ -126,10 +129,16 @@ test('missing relative fiscal dates are resolved in the website without replacin
     record('PEER1', 80, '', 'FY+1'),
     record('PEER1', 100, '', 'FY+2')
   ]
-  const missing = prepareForwardEstimates(raw, context.valuationDate)
+  const reconciled = reconcileManualInputs(raw)
+  assert.ok(
+    reconciled.every(
+      (r) => !r.issues.some((issue) => issue.code === 'CONFLICTING_INPUTS')
+    )
+  )
+  const missing = prepareForwardEstimates(reconciled, context.valuationDate)
   assert.equal(missing.dateRequests.length, 1)
   assert.equal(missing.records.filter((r) => r.calculation).length, 0)
-  const resolved = prepareForwardEstimates(raw, context.valuationDate, {
+  const resolved = prepareForwardEstimates(reconciled, context.valuationDate, {
     PEER1: { fy1: '2026-12-31', fy2: '2027-12-31' }
   })
   const derived = resolved.records.find((r) => r.calculation)
@@ -147,6 +156,28 @@ test('missing relative fiscal dates are resolved in the website without replacin
     )
   )
   assert.match(derived.dateResolution, /entered in the valuation workspace/)
+})
+
+test('intake keeps true same-period conflicts but separates FY offsets and forecast snapshots', () => {
+  const first = record('PEER1', 80, '', 'FY1')
+  const second = record('PEER1', 100, '', 'FY+1')
+  assert.ok(
+    reconcileManualInputs([first, second]).every((r) =>
+      r.issues.some((i) => i.code === 'CONFLICTING_INPUTS')
+    )
+  )
+  assert.ok(
+    reconcileManualInputs([
+      first,
+      { ...second, period: { ...second.period, label: 'FY+2' } }
+    ]).every((r) => !r.issues.some((i) => i.code === 'CONFLICTING_INPUTS'))
+  )
+  const older = { ...second, source: { ...second.source, asOf: '2026-10-20' } }
+  assert.ok(
+    reconcileManualInputs([first, older]).every(
+      (r) => !r.issues.some((i) => i.code === 'CONFLICTING_INPUTS')
+    )
+  )
 })
 
 test('different fiscal calendars produce aligned NTM windows instead of excluding all non-December peers', () => {

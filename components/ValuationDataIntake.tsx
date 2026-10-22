@@ -10,6 +10,7 @@ import {
   normalizeManual,
   type Observation,
   parseDelimited,
+  reconcileManualInputs,
   type SectionId,
   sections,
   templateCsv,
@@ -278,41 +279,7 @@ export function ValuationDataIntake() {
         valuationDate
       })
     )
-    const groups = new Map<string, number[]>()
-    for (const [index, record] of normalized.entries()) {
-      const key = [
-        record.issuerId,
-        record.field,
-        record.classification,
-        record.period.basis,
-        record.period.endDate,
-        record.source.section
-      ].join('|')
-      const indices = groups.get(key) || []
-      indices.push(index)
-      groups.set(key, indices)
-    }
-    for (const indices of groups.values()) {
-      if (indices.length < 2) continue
-      const definitions = new Set(
-        indices.map((index) =>
-          JSON.stringify([
-            normalized[index]!.value,
-            normalized[index]!.currency,
-            normalized[index]!.definition
-          ])
-        )
-      )
-      if (definitions.size > 1) {
-        for (const index of indices)
-          normalized[index]!.issues.push({
-            code: 'CONFLICTING_INPUTS',
-            message:
-              'Competing values or definitions require an explicit reconciliation.'
-          })
-      }
-    }
-    return normalized
+    return reconcileManualInputs(normalized)
   }, [observations, fileMap, valuationDate])
   const selected = fileMap.get(selectedId) || uploads[0]
   const sheet =
