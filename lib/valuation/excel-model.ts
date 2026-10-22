@@ -3,7 +3,9 @@ import {
   type executeDcf,
   type executeRelative,
   type IntakeContext,
+  peerPreview,
   prepareModel,
+  relativePeriodLabel,
   type RunSettings,
   sameIssuer
 } from './workflow.ts'
@@ -156,7 +158,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     context.mode !== 'rv' && (dcf || !relative) ? sheet('DCF') : null
   const financials = sheet('Financials')
   const peers = relative
-    ? sheet('Comps', [3, 3, 27, 19, 19, 16, 20, 20, 16, 65])
+    ? sheet('Comps', [3, 3, 27, 19, 19, 16, 20, 20, 16, 65, 20, 20, 32])
     : null
   const consensus = model.consensus.length
     ? sheet('Consensus', [3, 3, 35, 22, 22, 22, 22, 22])
@@ -231,6 +233,19 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   sources.tabColor = 'D8C7AD'
   const sourceRef = (record: NormalizedManual) =>
     `'Sources'!E${sourceRows.get(record)}`
+  const recordsById = new Map(
+    records.map((record) => [record.source.id, record])
+  )
+  const consensusRefs = new Map<string, string>()
+  const inputRef = (sourceId: string) => {
+    const record = recordsById.get(sourceId)
+    if (!record)
+      throw new Error(
+        'The relative valuation is missing its source observation: ' + sourceId
+      )
+    return consensusRefs.get(sourceId) || sourceRef(record)
+  }
+  let selectedTargetPriceRef: string | undefined
   const history = records.filter(
     (record) =>
       sameIssuer(record.issuerId, context.issuerId) &&
@@ -817,32 +832,55 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
 
   if (consensus) {
     const w = writer(consensus)
-    w.put('C2', 'Forward estimates reference', 'title')
+    w.put('C2', 'Forward estimates and RV earnings', 'title')
     w.put(
       'C3',
-      'Fiscal-year consensus is separate from the rolling DCF forecast. These values do not overwrite DCF assumptions.',
+      'Selected forward earnings feed Comps through formulas. FY, CY and NTM stay distinct. These estimates do not overwrite the separate rolling DCF assumptions.',
       'note'
     )
     const dates = [
       ...new Set(model.consensus.map((record) => record.period.endDate))
     ].toSorted()
-    w.put('C5', 'Consensus metric', 'header')
+    w.put('C5', 'Issuer / basis / consensus metric', 'header')
     for (const [index, date] of dates.entries())
       w.put(excelColumn(index + 3) + '5', serial(date), 'date')
 
-    const keys = [...new Set(model.consensus.map((record) => record.field))]
-    for (const [index, field] of keys.entries()) {
+    const groups = [
+      ...new Map(
+        model.consensus.map((record) => [
+          JSON.stringify([
+            record.issuerId,
+            record.field,
+            record.period.basis,
+            record.definition,
+            record.currency
+          ]),
+          record
+        ])
+      ).values()
+    ].toSorted(
+      (a, b) =>
+        Number(!sameIssuer(a.issuerId, context.issuerId)) -
+        Number(!sameIssuer(b.issuerId, context.issuerId))
+    )
+    const definitionCol = excelColumn(dates.length + 3)
+    w.put(definitionCol + '5', 'Definition / adjustments', 'header')
+    consensus.widths = [3, 3, 54, ...dates.map(() => 22), 65]
+    for (const [index, group] of groups.entries()) {
       const row = index + 6
       w.put(
         'C' + row,
-        field === 'netIncome'
-          ? 'Net income (provider definition)'
-          : fields[field] || field
+        `${group.issuerId} · ${group.period.basis} · ${group.field === 'netIncome' ? 'Net income (provider definition)' : fields[group.field] || group.field}`
       )
+      w.put(definitionCol + row, group.definition)
       for (const [column, date] of dates.entries()) {
         const choices = model.consensus.filter(
           (record) =>
-            record.field === field &&
+            record.issuerId === group.issuerId &&
+            record.field === group.field &&
+            record.period.basis === group.period.basis &&
+            record.definition === group.definition &&
+            record.currency === group.currency &&
             record.period.endDate === date &&
             record.source.asOf <= context.valuationDate
         )
@@ -859,14 +897,12 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
             )
           ).size === 1
         const record = unique ? latest[0] : undefined
-        if (record)
-          w.formula(
-            excelColumn(column + 3) + row,
-            sourceRef(record),
-            record.value,
-            'linked'
-          )
-        else w.put(excelColumn(column + 3) + row, 'n.a.', 'note')
+        if (record) {
+          const address = excelColumn(column + 3) + row
+          w.formula(address, sourceRef(record), record.value, 'linked')
+          for (const item of latest)
+            consensusRefs.set(item.source.id, `'Consensus'!${address}`)
+        } else w.put(excelColumn(column + 3) + row, 'n.a.', 'note')
       }
     }
     consensus.freezeRows = 5
@@ -877,7 +913,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     w.put('C2', context.company + ' relative valuation', 'title')
     w.put(
       'C3',
-      `${settings.multiple}; LTM ended ${relative.result.period.endDate}. Peers reflect the reviewed selection at export.`,
+      `${settings.multiple}; ${relativePeriodLabel(relative.result.period)}. Peer quartiles are benchmarks; the analyst target multiple is separate.`,
       'note'
     )
     const headers = [
@@ -885,20 +921,43 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       'Numerator',
       'Denominator',
       'Multiple',
-      'Source date',
-      'LTM end',
+      'Market as of',
+      'Earnings period end',
       'Definition',
-      'Comparability rationale'
+      'Comparability rationale',
+      'Earnings as of',
+      'Annual forecast change',
+      'Growth periods'
     ]
     for (const [index, label] of headers.entries())
       w.put(excelColumn(index + 2) + '5', label, 'header')
 
     const rows = relative.result.included
+    const preview = peerPreview(
+      model,
+      settings.multiple,
+      `${relative.result.period.basis}:${relative.result.period.endDate}`
+    )
     for (const [index, peer] of rows.entries()) {
       const row = index + 6
+      const used = relative.input.peers.find(
+        (item) => item.issuerId === peer.issuerId
+      )!
+      const numerator =
+        'equityValue' in used ? used.equityValue : used.enterpriseValue
       w.put('C' + row, peer.issuerId)
-      w.put('D' + row, peer.numerator, 'input')
-      w.put('E' + row, peer.denominator, 'input')
+      w.formula(
+        'D' + row,
+        inputRef(numerator.sourceId),
+        peer.numerator,
+        'linked'
+      )
+      w.formula(
+        'E' + row,
+        inputRef(used.metric.sourceId),
+        peer.denominator,
+        'linked'
+      )
       w.formula(
         'F' + row,
         `IF(AND(ISNUMBER(D${row}),ISNUMBER(E${row}),D${row}>0,E${row}>0),D${row}/E${row},"n.a.")`,
@@ -908,11 +967,42 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       w.put('H' + row, serial(relative.result.period.endDate), 'date')
       w.put('I' + row, relative.result.period.definition)
       w.put('J' + row, peer.rationale)
+      w.put(
+        'K' + row,
+        serial(recordsById.get(used.metric.sourceId)!.source.asOf),
+        'date'
+      )
+      const growth = preview.peers.find(
+        (item) => item.issuerId === peer.issuerId
+      )?.growth
+      if (growth) {
+        w.formula(
+          'L' + row,
+          `${inputRef(growth.records[1]!.source.id)}/${inputRef(growth.records[0]!.source.id)}-1`,
+          growth.value,
+          'percent'
+        )
+        w.put('M' + row, `${growth.from} to ${growth.to}`)
+      } else w.put('L' + row, 'n.a.', 'note')
     }
     const end = rows.length + 5
     w.section(end + 3, 'Valuation range')
     w.put('C' + (end + 4), 'Target metric')
-    w.put('E' + (end + 4), relative.result.targetMetric, 'input')
+    w.formula(
+      'E' + (end + 4),
+      inputRef(relative.input.targetMetric.sourceId),
+      relative.result.targetMetric,
+      'linked'
+    )
+    w.put('C' + (end + 5), 'Target annual forecast change')
+    if (preview.targetGrowth)
+      w.formula(
+        'E' + (end + 5),
+        `${inputRef(preview.targetGrowth.records[1]!.source.id)}/${inputRef(preview.targetGrowth.records[0]!.source.id)}-1`,
+        preview.targetGrowth.value,
+        'percent'
+      )
+    else w.put('E' + (end + 5), 'n.a.', 'note')
     const bridge = relative.input.capitalization
     const capRows: [number, string, number | null][] = [
       [end + 6, 'Cash', bridge.cash?.value ?? null],
@@ -959,32 +1049,83 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       w.put('C' + row, percentile, 'percent')
       w.formula(
         'D' + row,
-        `PERCENTILE.INC($F$6:$F$${end},C${row})`,
+        `IF(COUNT($F$6:$F$${end})<3,"n.a.",PERCENTILE.INC($F$6:$F$${end},C${row}))`,
         item.multiple
       )
       if (settings.multiple === 'P/E') w.put('E' + row, 'n.a.', 'note')
-      else w.formula('E' + row, `D${row}*$E$${end + 4}`, item.enterpriseValue)
+      else
+        w.formula(
+          'E' + row,
+          `IF(AND(ISNUMBER(D${row}),ISNUMBER($E$${end + 4}),$E$${end + 4}>0),D${row}*$E$${end + 4},"n.a.")`,
+          item.enterpriseValue
+        )
       w.formula(
         'F' + row,
         settings.multiple === 'P/E'
-          ? `D${row}*$E$${end + 4}`
-          : `E${row}+$E$${end + 6}+$E$${end + 7}-$E$${end + 8}-$E$${end + 9}-$E$${end + 10}`,
+          ? `IF(AND(ISNUMBER(D${row}),ISNUMBER($E$${end + 4}),$E$${end + 4}>0),D${row}*$E$${end + 4},"n.a.")`
+          : `IF(AND(ISNUMBER(E${row}),COUNT($E$${end + 6}:$E$${end + 10})=5),E${row}+$E$${end + 6}+$E$${end + 7}-$E$${end + 8}-$E$${end + 9}-$E$${end + 10},"n.a.")`,
         item.equityValue
       )
       w.formula(
         'G' + row,
-        `IF($E$${end + 11}>0,F${row}/$E$${end + 11},"n.a.")`,
+        `IF(AND(ISNUMBER(F${row}),ISNUMBER($E$${end + 11}),$E$${end + 11}>0),F${row}/$E$${end + 11},"n.a.")`,
         item.valuePerShare,
         'price'
       )
       w.formula(
         'H' + row,
-        `IF(AND(ISNUMBER($E$${end + 12}),$E$${end + 12}>0),G${row}/$E$${end + 12}-1,"n.a.")`,
+        `IF(AND(ISNUMBER(G${row}),ISNUMBER($E$${end + 12}),$E$${end + 12}>0),G${row}/$E$${end + 12}-1,"n.a.")`,
         item.upside ?? 'n.a.',
         'percent'
       )
     }
     let rationaleRow = rangeRow + 6
+    if (relative.result.selectedTarget) {
+      const selected = relative.result.selectedTarget
+      w.section(rationaleRow++, 'Selected analyst target multiple')
+      const selectedRow = rationaleRow++
+      w.put('C' + selectedRow, 'Selected multiple (editable)')
+      w.put('E' + selectedRow, selected.multiple, 'input')
+      const premiumRow = rationaleRow++
+      w.put('C' + premiumRow, 'Premium / discount to peer median')
+      w.formula(
+        'E' + premiumRow,
+        `IF(AND(ISNUMBER(E${selectedRow}),E${selectedRow}>0,ISNUMBER(D${rangeRow + 2}),D${rangeRow + 2}>0),E${selectedRow}/D${rangeRow + 2}-1,"n.a.")`,
+        selected.premiumToMedian,
+        'percent'
+      )
+      const evRow = rationaleRow++,
+        equityRow = rationaleRow++,
+        shareRow = rationaleRow++
+      w.put('C' + evRow, 'Enterprise value')
+      if (settings.multiple === 'P/E') w.put('E' + evRow, 'n.a.', 'note')
+      else
+        w.formula(
+          'E' + evRow,
+          `IF(AND(ISNUMBER(E${selectedRow}),E${selectedRow}>0,ISNUMBER($E$${end + 4}),$E$${end + 4}>0),E${selectedRow}*$E$${end + 4},"n.a.")`,
+          selected.enterpriseValue
+        )
+      w.put('C' + equityRow, 'Common equity value')
+      w.formula(
+        'E' + equityRow,
+        settings.multiple === 'P/E'
+          ? `IF(AND(ISNUMBER(E${selectedRow}),E${selectedRow}>0,ISNUMBER($E$${end + 4}),$E$${end + 4}>0),E${selectedRow}*$E$${end + 4},"n.a.")`
+          : `IF(AND(ISNUMBER(E${evRow}),COUNT($E$${end + 6}:$E$${end + 10})=5),E${evRow}+$E$${end + 6}+$E$${end + 7}-$E$${end + 8}-$E$${end + 9}-$E$${end + 10},"n.a.")`,
+        selected.equityValue
+      )
+      w.put('C' + shareRow, 'Selected target value per share')
+      w.formula(
+        'E' + shareRow,
+        `IF(AND(ISNUMBER(E${equityRow}),ISNUMBER($E$${end + 11}),$E$${end + 11}>0),E${equityRow}/$E$${end + 11},"n.a.")`,
+        selected.valuePerShare,
+        'totalPrice'
+      )
+      selectedTargetPriceRef = `'Comps'!E${shareRow}`
+      w.put('C' + rationaleRow++, 'Growth and returns assessment', 'header')
+      for (const line of noteLines(selected.rationale))
+        w.put('C' + rationaleRow++, line, 'note')
+      rationaleRow++
+    }
     w.section(rationaleRow++, 'Peer rationales and public sources')
     for (const peer of rows) {
       w.section(rationaleRow++, peer.issuerId)
@@ -1095,7 +1236,10 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   }
   if (relative && peers) {
     w.section(row++, 'Relative valuation · ' + settings.multiple)
-    w.put('C' + row, '25th / median / 75th percentile value per share')
+    w.put(
+      'C' + row,
+      'Peer benchmarks: 25th / median / 75th percentile value per share'
+    )
     const last = relative.result.included.length + 5 + 15
     for (const [index, item] of relative.result.range.entries())
       w.formula(
@@ -1105,14 +1249,24 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         'price'
       )
 
-    row += 3
+    row += 2
+    if (relative.result.selectedTarget && selectedTargetPriceRef) {
+      w.put('C' + row, 'Selected analyst target value per share')
+      w.formula(
+        'F' + row++,
+        selectedTargetPriceRef,
+        relative.result.selectedTarget.valuePerShare,
+        'totalPrice'
+      )
+    }
+    row++
   }
   w.section(row++, 'Using this workbook')
   for (const text of [
     'DCF input cells contain the rates and capital adjustments from the website. Blank required inputs display n.a.',
     'Cash-flow forecasts update from operating assumptions. WACC changes discounting; terminal growth and ROIC change terminal value.',
     'Sensitivity uses a native two-variable Excel Data Table. Enable automatic calculation, including Data Tables, in Excel.',
-    'Financials and Sources retain mapped reported values and source-cell references. Consensus remains a separate reference.',
+    'Financials and Sources retain mapped values and source-cell references. Selected forward Consensus earnings link to Comps; DCF assumptions remain separate.',
     'Historical statements and DCF cash flows are included. Detailed forecast balance sheets, debt schedules and NOL schedules require additional drivers.'
   ])
     w.put('C' + row++, text, 'note')

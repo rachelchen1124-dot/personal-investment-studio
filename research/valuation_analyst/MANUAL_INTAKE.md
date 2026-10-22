@@ -73,6 +73,21 @@ DCF and relative valuation invoke the deterministic engines independently:
   summary rows are excluded. SP_NET_INC is not assumed to be common net income.
   Price times shares is checked against market capitalization when provided.
 
+RV has an explicit earnings-period selector. It prefers an aligned forward
+period when forecasts are mapped; reported LTM remains an explicitly labeled
+benchmark. FY, CY and NTM are distinct, with matching target/peer period ends,
+accounting definitions and source dates on or before the valuation date.
+If only the target has forecasts, missing peer estimates block forward comps;
+the app never combines target forward earnings with trailing peer earnings.
+Changing the period clears an adopted target multiple and deselects ineligible
+peers while preserving manually written comparability notes.
+
+Peer quartiles are benchmarks. An optional analyst-selected target multiple
+requires a sourced growth/returns rationale. Annual estimate changes are shown
+when comparable adjacent forecast years exist; no ROIC or growth premium is
+fabricated from missing data. A current-year FY estimate is not NTM. Differing
+fiscal years need calendarized estimates before inclusion.
+
 Native SP/IQ screens propose IQ market values in millions, SP financial values in
 thousands and individual shares. The user must confirm this mixed-unit profile,
 currency and saved formula results. Pending/error cells remain unavailable;
@@ -126,7 +141,10 @@ The **Download linked Excel model (.xlsx)** action exports a formatted workbook
 with a valuation summary, editable forecast assumptions and equity bridge, linked
 DCF formulas, reported financials, original historical source tables and a
 source-cell ledger. A calculated RV adds a formula-linked comps build. Uploaded
-consensus stays on its own reference tab. Only current calculated methods are
+consensus is grouped by issuer, metric and basis. Forward Comps denominators link
+through that Consensus tab to the source ledger, including the target metric.
+Market values also link to their source records. An adopted target multiple and
+its rationale are separate from peer quartiles. Only current calculated methods are
 included; a DCF run is not required for an RV-only export.
 
 The DCF uses a native two-variable Excel What-If Data Table linked to the actual

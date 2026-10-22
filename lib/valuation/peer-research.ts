@@ -60,6 +60,7 @@ export type PeerSelection = {
 
 export type PeerComparison = {
   field: string
+  basis?: string
   targetValue?: number | null
   peerValue?: number | null
   period?: string
@@ -163,7 +164,7 @@ export function draftPeerRationale(
     comparison.period
   ) {
     parts.push(
-      `Uploaded screen: peer LTM ${comparison.field} is ${(comparison.peerValue / comparison.targetValue).toFixed(2)}× the target's for the period ended ${comparison.period}; assess the difference in operating scale.`
+      `Uploaded screen: peer ${comparison.basis || 'LTM'} ${comparison.field} is ${(comparison.peerValue / comparison.targetValue).toFixed(2)}× the target's for the period ended ${comparison.period}; assess the difference in operating scale.`
     )
   }
   parts.push(

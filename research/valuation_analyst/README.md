@@ -183,8 +183,13 @@ RV results remain separately visible; no automatic blend conceals disagreement.
 | 5. Pilot and benchmark | Run one selected company from evidence through both outputs | Reconcile historicals, EV/equity bridge and per-share values with a reviewed reference model; document differences |
 
 Public SEC filings are the default source for reported facts. DCF will use
-documented analyst forecasts; RV can use reported LTM metrics and dated market
-snapshots. Optional sourced uploads can supply missing inputs or forward estimates.
+documented analyst forecasts. RV now selects matching target/peer forward FY, CY
+or NTM estimates from uploaded consensus, with reported LTM as an explicit
+benchmark. Target-only forecasts cannot substitute for missing forward peers.
+The Comps workbook links selected earnings through Consensus to Sources; it
+retains a separately documented analyst target multiple and the peer benchmark
+quartiles. Sourced growth and returns evidence is needed to justify any premium
+or discount; the app does not invent an assessment from missing return data.
 FactSet is optional and its entitlement is not a build dependency. SEC filings do
 not supply broker consensus or market prices; forward RV needs separate evidence.
 

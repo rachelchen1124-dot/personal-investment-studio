@@ -5,6 +5,7 @@ import {
   calculateRelativeValuation,
   type Capitalization,
   type DcfInput,
+  type MetricPeriod,
   type ModelContext,
   type Multiple,
   type Source
@@ -53,6 +54,9 @@ export type RunSettings = {
   dcfReview: boolean
   peerProfileReview: boolean
   multiple: Multiple
+  relativePeriod: string
+  targetMultiple: string
+  targetMultipleRationale: string
   peerSelections: Record<string, PeerSelection>
 }
 const monetaryShareFields = new Set([
@@ -254,20 +258,39 @@ export function prepareModel(
   const targetScreen = peerRecords.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
   )
-  const consensus = target.filter(
+  const relativeRecords = records.filter(
     (record) =>
-      record.source.section === 'forward' &&
+      ['peers', 'forward'].includes(record.source.section) &&
+      available(record, context.valuationDate)
+  )
+  const consensus = relativeRecords.filter(
+    (record) =>
       record.classification === 'consensus' &&
-      record.period.basis === 'FY'
+      ['FY', 'NTM', 'CY'].includes(record.period.basis) &&
+      record.period.months === 12
   )
   const currency =
-    capital.cash?.currency || annual.revenue?.records[0]?.currency || ''
+    capital.cash?.currency ||
+    annual.revenue?.records[0]?.currency ||
+    targetScreen[0]?.currency ||
+    consensus.find((record) => sameIssuer(record.issuerId, context.issuerId))
+      ?.currency ||
+    ''
   return {
+    context,
     annual,
     capital,
     tradeWorkingCapital,
     workingCapital,
-    peers,
+    peers: [
+      ...new Set([
+        ...peers,
+        ...relativeRecords.map((record) => record.issuerId)
+      ])
+    ]
+      .filter((id) => !sameIssuer(id, context.issuerId))
+      .toSorted(),
+    relativeRecords,
     peerRecords,
     targetScreen,
     consensus,
@@ -324,6 +347,9 @@ export function initialSettings(
     dcfReview: false,
     peerProfileReview: false,
     multiple: 'EV/EBITDA',
+    relativePeriod: peerPreview(model, 'EV/EBITDA').periodKey,
+    targetMultiple: '',
+    targetMultipleRationale: '',
     peerSelections: {}
   }
 }
@@ -532,9 +558,83 @@ export function executeDcf(
   }
 }
 
+export function relativePeriodLabel(period: {
+  basis: string
+  endDate: string
+}) {
+  const name =
+    period.basis === 'FY'
+      ? 'FY estimate'
+      : period.basis === 'CY'
+        ? 'Calendar-year estimate'
+        : period.basis === 'NTM'
+          ? 'NTM estimate'
+          : 'LTM actual'
+  return `${name} · ${period.endDate}`
+}
+
+function relativeMetric(record: NormalizedManual, date: string) {
+  return (
+    record.period.months === 12 &&
+    (record.period.basis === 'LTM'
+      ? record.classification === 'reported' && record.period.endDate <= date
+      : ['FY', 'CY', 'NTM'].includes(record.period.basis) &&
+        record.classification === 'consensus' &&
+        record.period.endDate > date)
+  )
+}
+
+/** Comparable annual estimate changes, with both periods retained as evidence. */
+function forecastGrowth(
+  records: NormalizedManual[],
+  metric?: NormalizedManual
+) {
+  if (
+    !metric ||
+    metric.period.basis === 'LTM' ||
+    !metric.value ||
+    metric.value <= 0
+  )
+    return undefined
+  const adjacent = records.filter((record) => {
+    const days =
+      Math.abs(
+        Date.parse(record.period.endDate) - Date.parse(metric.period.endDate)
+      ) / 86_400_000
+    return (
+      sameIssuer(record.issuerId, metric.issuerId) &&
+      record.field === metric.field &&
+      record.period.basis === metric.period.basis &&
+      record.classification === 'consensus' &&
+      record.period.months === 12 &&
+      record.definition === metric.definition &&
+      record.currency === metric.currency &&
+      days >= 350 &&
+      days <= 380
+    )
+  })
+  const before = one(
+    adjacent.filter((record) => record.period.endDate < metric.period.endDate)
+  )
+  const after = one(
+    adjacent.filter((record) => record.period.endDate > metric.period.endDate)
+  )
+  const from = before || metric,
+    to = before ? metric : after
+  if (!to || !from.value || from.value <= 0 || to.value === null)
+    return undefined
+  return {
+    value: to.value / from.value - 1,
+    from: from.period.endDate,
+    to: to.period.endDate,
+    records: [from, to]
+  }
+}
+
 export function peerPreview(
   model: ReturnType<typeof prepareModel>,
-  multiple: Multiple
+  multiple: Multiple,
+  requestedPeriod?: string
 ) {
   const field = {
     'EV/Revenue': 'revenue',
@@ -542,45 +642,134 @@ export function peerPreview(
     'EV/EBIT': 'ebit',
     'P/E': 'netIncome'
   }[multiple]
-  const target = one(
-    model.targetScreen.filter(
-      (record) => record.field === field && record.period.basis === 'LTM'
-    )
+  const metrics = model.relativeRecords.filter(
+    (record) =>
+      record.field === field &&
+      relativeMetric(record, model.context.valuationDate)
   )
-  return {
-    field,
-    target,
-    peers: model.peers.map((issuerId) => {
+  const targetMetrics = metrics.filter((record) =>
+    sameIssuer(record.issuerId, model.context.issuerId)
+  )
+  const peersFor = (target: NormalizedManual | undefined, key: string) =>
+    model.peers.map((issuerId) => {
       const metric = one(
-        model.peerRecords.filter(
+        metrics.filter(
           (record) =>
             record.issuerId === issuerId &&
-            record.field === field &&
-            record.period.basis === 'LTM'
+            `${record.period.basis}:${record.period.endDate}` === key
         )
       )
       const numerator = one(
         model.peerRecords.filter(
           (record) =>
             record.issuerId === issuerId &&
+            record.period.basis === 'instant' &&
+            record.classification === 'market' &&
             record.field ===
               (multiple === 'P/E' ? 'equityValue' : 'enterpriseValue')
         )
       )
-      const reason =
-        !metric || !numerator
-          ? 'Missing numerator or metric'
+      const otherMetric = one(
+        metrics.filter(
+          (record) =>
+            record.issuerId === issuerId &&
+            record.period.basis === key.split(':')[0]
+        )
+      )
+      const reason = !metric
+        ? otherMetric &&
+          target &&
+          otherMetric.period.endDate !== target.period.endDate
+          ? `Period ${otherMetric.period.endDate} differs from target ${target.period.endDate}; upload calendarized or aligned estimates.`
+          : `Missing or conflicting ${key.split(':')[0] || 'selected-period'} ${field}; upload an aligned earnings value. Values from other periods were not substituted.`
+        : !numerator
+          ? 'Missing market valuation numerator'
           : metric.value! <= 0 || numerator.value! <= 0
             ? 'N/M: nonpositive value'
             : !target
-              ? 'Target LTM metric is missing from this screen'
-              : metric.period.endDate !== target.period.endDate
-                ? `Period ${metric.period.endDate} differs from target ${target.period.endDate}`
-                : metric.definition !== target.definition
-                  ? 'Accounting definitions differ'
-                  : ''
-      return { issuerId, metric, numerator, reason }
+              ? 'Target metric is missing for the selected earnings period'
+              : target.value! <= 0
+                ? 'N/M: the target earnings value is not positive'
+                : numerator.source.asOf !== model.context.valuationDate
+                  ? `Market snapshot ${numerator.source.asOf} does not match valuation date ${model.context.valuationDate}`
+                  : metric.period.endDate !== target.period.endDate
+                    ? `Period ${metric.period.endDate} differs from target ${target.period.endDate}`
+                    : metric.definition !== target.definition
+                      ? 'Accounting definitions differ'
+                      : ''
+      return {
+        issuerId,
+        metric,
+        numerator,
+        reason,
+        growth: forecastGrowth(model.relativeRecords, metric)
+      }
     })
+  const choices = [
+    ...new Set(
+      targetMetrics.map(
+        (record) => `${record.period.basis}:${record.period.endDate}`
+      )
+    )
+  ]
+    .map((key) => {
+      const [basis, endDate] = key.split(':') as [MetricPeriod['basis'], string]
+      const target = one(
+        targetMetrics.filter(
+          (record) => `${record.period.basis}:${record.period.endDate}` === key
+        )
+      )
+      return {
+        key,
+        basis,
+        endDate,
+        label: relativePeriodLabel({ basis, endDate }),
+        eligiblePeers: peersFor(target, key).filter((peer) => !peer.reason)
+          .length
+      }
+    })
+    .toSorted((a, b) => {
+      const rank = (item: typeof a) =>
+        item.basis === 'NTM'
+          ? 0
+          : item.basis === 'CY'
+            ? 1
+            : item.basis === 'FY'
+              ? Date.parse(item.endDate) -
+                  Date.parse(model.context.valuationDate) >
+                365 * 86_400_000
+                ? 2
+                : 3
+              : 4
+      return (
+        rank(a) - rank(b) ||
+        (a.basis === 'LTM'
+          ? b.endDate.localeCompare(a.endDate)
+          : a.endDate.localeCompare(b.endDate))
+      )
+    })
+  const forward = choices.filter((choice) => choice.basis !== 'LTM')
+  const defaultPeriod =
+    forward.find((choice) => choice.eligiblePeers >= 3) ||
+    forward[0] ||
+    choices[0]
+  const periodKey = requestedPeriod || defaultPeriod?.key || ''
+  const period = choices.find((choice) => choice.key === periodKey)
+  const target = one(
+    targetMetrics.filter(
+      (record) =>
+        `${record.period.basis}:${record.period.endDate}` === periodKey
+    )
+  )
+  return {
+    field,
+    target,
+    periodKey,
+    periodChoices: choices,
+    basis: period?.basis,
+    periodLabel: period?.label || 'No mapped earnings period',
+    targetGrowth: forecastGrowth(model.relativeRecords, target),
+    peers: peersFor(target, periodKey)
   }
 }
 
@@ -594,14 +783,25 @@ export function executeRelative(
     settings.peerProfileReview,
     'Confirm the peer export currency, mixed-unit profile and saved snapshot date.'
   )
-  const preview = peerPreview(prepareModel(records, context), settings.multiple)
+  const preview = peerPreview(
+    prepareModel(records, context),
+    settings.multiple,
+    settings.relativePeriod
+  )
   requireValue(
     preview.target,
-    `Map the target company's LTM ${preview.field} into the peer data section. It must use the same provider definition as the peers.`
+    `Map the target company's ${preview.field} for the selected earnings period. Forward comps need target and peer estimates with the same basis, end date and accounting definition.`
   )
   const target = preview.target
   const selected = preview.peers.filter(
     (peer) => settings.peerSelections[peer.issuerId]?.included
+  )
+  requireValue(
+    selected.every((peer) => !peer.reason),
+    `Selected peers do not have aligned earnings: ${selected
+      .filter((peer) => peer.reason)
+      .map((peer) => `${peer.issuerId}: ${peer.reason}`)
+      .join('; ')}`
   )
   requireValue(
     selected.length >= 3,
@@ -648,10 +848,15 @@ export function executeRelative(
       )
   }
   const period = {
-    basis: 'LTM' as const,
+    basis: preview.basis!,
     endDate: target.period.endDate,
     definition: target.definition
   }
+  if (settings.targetMultiple?.trim())
+    requireValue(
+      settings.targetMultipleRationale?.trim(),
+      'Add a sourced growth and returns assessment for the selected target multiple.'
+    )
   const input = {
     context: base.context,
     sources: base.sources,
@@ -659,6 +864,19 @@ export function executeRelative(
     multiple: settings.multiple,
     period,
     targetMetric: { value: target.value!, sourceId: target.source.id },
+    ...(settings.targetMultiple?.trim()
+      ? {
+          targetMultiple: {
+            value: numberInput(
+              settings.targetMultiple,
+              'Selected target multiple',
+              true
+            ),
+            sourceId: 'analyst:valuation-run'
+          },
+          targetMultipleRationale: settings.targetMultipleRationale?.trim()
+        }
+      : {}),
     peers: selected.map((peer) => {
       const selection = settings.peerSelections[peer.issuerId]!
       requireValue(
@@ -681,7 +899,7 @@ export function executeRelative(
         currency: peer.metric.currency!,
         amountUnit: 'millions' as const,
         period: {
-          basis: 'LTM' as const,
+          basis: preview.basis!,
           endDate: peer.metric.period.endDate,
           definition: peer.metric.definition
         },
@@ -703,7 +921,7 @@ export function executeRelative(
     })
   }
   requireValue(
-    target.source.asOf === context.valuationDate,
+    preview.basis !== 'LTM' || target.source.asOf === context.valuationDate,
     `Peer snapshot is ${target.source.asOf}; set the valuation date to that date or upload a matching snapshot.`
   )
   const result = calculateRelativeValuation(input)

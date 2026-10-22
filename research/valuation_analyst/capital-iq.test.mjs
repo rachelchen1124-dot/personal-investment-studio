@@ -167,6 +167,7 @@ function settingsFor(records) {
     capitalReview: true,
     dcfReview: true,
     peerProfileReview: true,
+    relativePeriod: 'LTM:2026-06-30',
     preferred: '0',
     nonOperating: '0',
     extraShares: '0',
@@ -425,7 +426,7 @@ test('native consensus corrects legacy scale, retains A/E, skips alternate stati
 test('peer profile keeps market values, monetary figures and shares on separate scales, excludes target and summary rows', () => {
   const records = mapped()
   const model = prepareModel(records, context)
-  const preview = peerPreview(model, 'EV/EBITDA')
+  const preview = peerPreview(model, 'EV/EBITDA', 'LTM:2026-06-30')
   assert.equal(model.peers.length, 4)
   assert.ok(
     !model.peers.some((id) => id.includes('DEMO') || id.includes('Median'))

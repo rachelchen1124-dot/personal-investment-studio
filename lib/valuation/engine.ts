@@ -62,7 +62,7 @@ export type DcfInput = ModelInputs & {
 }
 
 export type MetricPeriod = {
-  basis: 'LTM' | 'NTM' | 'CY'
+  basis: 'LTM' | 'NTM' | 'CY' | 'FY'
   endDate: string
   // Must identify reported/adjusted treatment, SBC, leases and other adjustments.
   definition: string
@@ -92,6 +92,8 @@ export type RelativeValuationInput = ModelInputs & {
   multiple: Multiple
   period: MetricPeriod
   targetMetric: Observation
+  targetMultiple?: Observation
+  targetMultipleRationale?: string
   peers: Peer[]
 }
 
@@ -471,7 +473,7 @@ export function calculateDcf(input: DcfInput) {
     }
   })
 
-  const last = forecast[forecast.length - 1]!
+  const last = forecast.at(-1)!
   // Stable growth requires reinvestment: g = reinvestment rate * terminal ROIC.
   const terminalNopat = finiteOutput(last.nopat * (1 + growth), 'terminalNopat')
   requireInput(
@@ -558,8 +560,8 @@ function validatePeriod(
     `${label}: an object is required`
   )
   requireInput(
-    ['LTM', 'NTM', 'CY'].includes(period.basis),
-    `${label}.basis: expected LTM, NTM or CY`
+    ['LTM', 'NTM', 'CY', 'FY'].includes(period.basis),
+    `${label}.basis: expected LTM, NTM, CY or a forward FY estimate`
   )
   validDate(period.endDate, `${label}.endDate`)
   nonempty(period.definition, `${label}.definition`)
@@ -572,6 +574,11 @@ function validatePeriod(
     requireInput(
       period.endDate > valuationDate,
       `${label}: an NTM period must end after the valuation date`
+    )
+  if (period.basis === 'FY')
+    requireInput(
+      period.endDate > valuationDate,
+      `${label}: a forward FY estimate must end after the valuation date`
     )
 }
 
@@ -684,9 +691,8 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
   )
   const multiples = included
     .map((peer) => peer.multiple)
-    .sort((left, right) => left - right)
-  const range = ([0.25, 0.5, 0.75] as const).map((quantile) => {
-    const selectedMultiple = percentile(multiples, quantile)
+    .toSorted((left, right) => left - right)
+  const valueAt = (selectedMultiple: number) => {
     const impliedValue = finiteOutput(
       selectedMultiple * targetMetric,
       'impliedValue'
@@ -702,7 +708,6 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
       'valuePerShare'
     )
     return {
-      percentile: quantile * 100,
       multiple: selectedMultiple,
       enterpriseValue,
       equityValue,
@@ -715,7 +720,27 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
               'upside'
             )
     }
-  })
+  }
+  const range = ([0.25, 0.5, 0.75] as const).map((quantile) => ({
+    percentile: quantile * 100,
+    ...valueAt(percentile(multiples, quantile))
+  }))
+  let selectedTarget:
+    | (ReturnType<typeof valueAt> & {
+        rationale: string
+        premiumToMedian: number
+      })
+    | null = null
+  if (input.targetMultiple || input.targetMultipleRationale?.trim()) {
+    nonempty(input.targetMultipleRationale || '', 'targetMultipleRationale')
+    const selectedMultiple = read(input.targetMultiple, 'targetMultiple')
+    requireInput(selectedMultiple > 0, 'targetMultiple must be positive')
+    selectedTarget = {
+      ...valueAt(selectedMultiple),
+      rationale: input.targetMultipleRationale!,
+      premiumToMedian: selectedMultiple / range[1]!.multiple - 1
+    }
+  }
   const details = audit(input)
   return {
     ...details,
@@ -727,11 +752,13 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
     excluded,
     range,
     median: range[1]!,
+    selectedTarget,
     equityBridge: capital,
     warnings: [
       ...details.warnings,
       'The 25th/50th/75th percentile outputs describe the supplied peer set; they are not forecast probabilities or confidence intervals.',
-      'Peer selection, metric definitions, calendarization and any outlier exclusions require documented analyst judgment; no outliers are silently removed.'
+      'Peer selection, metric definitions, calendarization and any outlier exclusions require documented analyst judgment; no outliers are silently removed.',
+      'The peer median is a benchmark, not an automatically justified target multiple. A selected target multiple needs a sourced growth and returns assessment.'
     ]
   }
 }
@@ -769,9 +796,9 @@ export function calculateDcfSensitivity(
           terminalGrowth: { ...input.terminalGrowth, value: growth }
         })
         return { growth, valuePerShare: model.valuePerShare, error: null }
-      } catch (error) {
-        if (!(error instanceof ValuationInputError)) throw error
-        return { growth, valuePerShare: null, error: error.message }
+      } catch (err) {
+        if (!(err instanceof ValuationInputError)) throw err
+        return { growth, valuePerShare: null, error: err.message }
       }
     })
   }))

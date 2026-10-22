@@ -21,6 +21,7 @@ import {
   type IntakeContext,
   peerPreview,
   prepareModel,
+  relativePeriodLabel,
   type RunSettings
 } from '@/lib/valuation/workflow'
 import styles from '@/styles/ValuationIntake.module.css'
@@ -130,7 +131,10 @@ export function ValuationModelRunner({
   const currentFeedback = feedback?.signature === signature ? feedback : null
   const dcfRun = dcf?.signature === signature ? dcf.run : null
   const rvRun = relative?.signature === signature ? relative.run : null
-  const preview = peerPreview(model, settings.multiple)
+  const preview = React.useMemo(
+    () => peerPreview(model, settings.multiple, settings.relativePeriod),
+    [model, settings.multiple, settings.relativePeriod]
+  )
   React.useEffect(() => () => researchController.current?.abort(), [])
   React.useEffect(() => {
     if (!currentFeedback) return
@@ -145,6 +149,43 @@ export function ValuationModelRunner({
   }, [currentFeedback])
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => {
     setSettings((current) => ({ ...current, [key]: value }))
+    setFeedback(null)
+  }
+  const chooseRelativePeriod = (multiple: Multiple, period?: string) => {
+    const next = peerPreview(model, multiple, period)
+    setSettings((current) => ({
+      ...current,
+      multiple,
+      relativePeriod: next.periodKey,
+      targetMultiple: '',
+      targetMultipleRationale: '',
+      peerSelections: Object.fromEntries(
+        Object.entries(current.peerSelections).map(([id, selection]) => {
+          const peer = next.peers.find((item) => item.issuerId === id)
+          const updated = {
+            ...selection,
+            included: selection.included && Boolean(peer && !peer.reason)
+          }
+          return [
+            id,
+            selection.research
+              ? applyPeerResearch(
+                  updated,
+                  selection.research.target,
+                  selection.research.peer,
+                  {
+                    field: next.field,
+                    basis: next.basis,
+                    targetValue: next.target?.value,
+                    peerValue: peer?.metric?.value,
+                    period: peer?.metric?.period.endDate
+                  }
+                )
+              : updated
+          ]
+        })
+      )
+    }))
     setFeedback(null)
   }
   const input = (key: NumericKey, label: string, note?: string) => (
@@ -230,7 +271,11 @@ export function ValuationModelRunner({
           setSettings((current) => {
             // The user may change the multiple or edit a rationale while the
             // public request is running. Compare against the latest state.
-            const latest = peerPreview(model, current.multiple)
+            const latest = peerPreview(
+              model,
+              current.multiple,
+              current.relativePeriod
+            )
             const item = latest.peers.find(
               (candidate) => candidate.issuerId === issuerId
             )
@@ -244,6 +289,7 @@ export function ValuationModelRunner({
                   peer,
                   {
                     field: latest.field,
+                    basis: latest.basis,
                     targetValue: latest.target?.value,
                     peerValue: item?.metric?.value,
                     period: item?.metric?.period.endDate
@@ -472,7 +518,9 @@ export function ValuationModelRunner({
         [
           'Relative valuation',
           settings.multiple,
-          'LTM end',
+          'Earnings basis',
+          rvRun.result.period.basis,
+          'Period end',
           rvRun.result.period.endDate,
           'Target metric',
           rvRun.result.targetMetric
@@ -517,6 +565,24 @@ export function ValuationModelRunner({
           peer.reason
         ])
       )
+      if (rvRun.result.selectedTarget) {
+        const chosen = rvRun.result.selectedTarget
+        rows.push(
+          [
+            'Selected target multiple',
+            chosen.multiple,
+            'Enterprise value',
+            chosen.enterpriseValue,
+            'Equity value',
+            chosen.equityValue,
+            'Value per share',
+            chosen.valuePerShare,
+            'Premium / discount to peer median',
+            chosen.premiumToMedian
+          ],
+          ['Growth and returns rationale', chosen.rationale]
+        )
+      }
     }
     rows.push([
       'Source audit',
@@ -627,8 +693,9 @@ export function ValuationModelRunner({
         The historical base ends{' '}
         {model.annual.revenue?.endDate || 'at an unresolved date'}. The DCF
         carries this run rate to {context.valuationDate} and projects five full
-        rolling years. Review intervening events. Fiscal-year consensus stays a
-        separate reference and is not treated as NTM.
+        rolling years. Review intervening events. Forward consensus can supply
+        RV earnings; it remains separate from the DCF forecast and is not
+        relabeled as NTM.
       </p>
       <button type='button' onClick={onReview}>
         Review source cells and units
@@ -899,7 +966,7 @@ export function ValuationModelRunner({
             <select
               value={settings.multiple}
               onChange={(event) =>
-                set('multiple', event.target.value as Multiple)
+                chooseRelativePeriod(event.target.value as Multiple)
               }
             >
               {(['EV/Revenue', 'EV/EBITDA', 'EV/EBIT', 'P/E'] as const).map(
@@ -909,12 +976,54 @@ export function ValuationModelRunner({
               )}
             </select>
           </label>
+          <label>
+            Earnings period
+            <select
+              value={preview.periodKey}
+              onChange={(event) =>
+                chooseRelativePeriod(settings.multiple, event.target.value)
+              }
+            >
+              {!preview.periodChoices.length ? (
+                <option value=''>No annual earnings period mapped</option>
+              ) : null}
+              {preview.periodChoices.map((period) => (
+                <option key={period.key} value={period.key}>
+                  {period.label} · {period.eligiblePeers} aligned peers
+                </option>
+              ))}
+            </select>
+          </label>
           <p className={styles.caption}>
-            Target {preview.field}: {format(preview.target?.value)} · LTM ended{' '}
-            {preview.target?.period.endDate || 'missing'}. Native SP_NET_INC
-            needs explicit common-equity attribution before P/E can run.
+            Target {preview.field}: {format(preview.target?.value)} ·{' '}
+            {preview.periodLabel}. Native SP_NET_INC needs explicit
+            common-equity attribution before P/E can run.
           </p>
+          {preview.targetGrowth ? (
+            <p className={styles.caption}>
+              Target annual forecast change:{' '}
+              {percent(preview.targetGrowth.value)} ({preview.targetGrowth.from}{' '}
+              to {preview.targetGrowth.to}). Review comparable growth, returns
+              on capital and risk before choosing a target multiple.
+            </p>
+          ) : null}
+          {preview.basis && preview.basis !== 'LTM' ? (
+            <p
+              className={
+                preview.peers.filter((peer) => !peer.reason).length < 3
+                  ? styles.notice
+                  : styles.caption
+              }
+            >
+              {preview.peers.filter((peer) => !peer.reason).length} of{' '}
+              {preview.peers.length} peers have aligned {preview.periodLabel}{' '}
+              earnings. Upload matching peer forecasts in Peer Data or Forward
+              Estimates. FY estimates are not relabeled as NTM, and trailing
+              earnings are not substituted.
+            </p>
+          ) : null}
           {preview.target &&
+          preview.basis === 'LTM' &&
           model.annual[preview.field] &&
           Math.abs(preview.target.value! - model.annual[preview.field]!.value) >
             0.000_001 ? (
@@ -934,11 +1043,8 @@ export function ValuationModelRunner({
                 set('peerProfileReview', event.target.checked)
               }
             />
-            I confirm the peer export currency and snapshot date. For this
-            Capital IQ screen profile, IQ market values are in millions, SP
-            statement amounts in thousands and shares in individual units;
-            prices remain per share. I have reviewed saved formula results and
-            accounting definitions.
+            I have reviewed currencies, units, market snapshot dates, forecast
+            vintages and metric definitions for the target and selected peers.
           </label>
           <div className={styles.bottomActions}>
             <button
@@ -1051,6 +1157,12 @@ export function ValuationModelRunner({
                               ) + '×'
                             : '—'}
                         </small>
+                        {peer.growth ? (
+                          <small>
+                            Forecast change {percent(peer.growth.value)} (
+                            {peer.growth.from} to {peer.growth.to})
+                          </small>
+                        ) : null}
                       </td>
                       <td>
                         {peer.metric?.period.endDate || 'Missing'}
@@ -1096,7 +1208,7 @@ export function ValuationModelRunner({
                           aria-label={
                             'Fetch public information for ' + peer.issuerId
                           }
-                          disabled={researchBusy || Boolean(peer.reason)}
+                          disabled={researchBusy}
                           onClick={() => researchPeers([peer.issuerId])}
                         >
                           {researchingIds.includes(peer.issuerId)
@@ -1345,9 +1457,36 @@ export function ValuationModelRunner({
           {!preview.peers.length ? (
             <p className={styles.notice}>
               Add a peer screen with identifiers, a target row, dated market
-              values and LTM financial metrics.
+              values and matching annual earnings estimates or explicitly
+              selected LTM actuals.
             </p>
           ) : null}
+          <label>
+            Selected target multiple (×, optional)
+            <input
+              type='number'
+              min='0.0001'
+              step='any'
+              value={settings.targetMultiple}
+              onChange={(event) => set('targetMultiple', event.target.value)}
+            />
+          </label>
+          <label>
+            Growth and returns assessment for the selected multiple
+            <textarea
+              rows={3}
+              value={settings.targetMultipleRationale}
+              onChange={(event) =>
+                set('targetMultipleRationale', event.target.value)
+              }
+              placeholder='Explain the premium or discount using sourced growth, ROIC/returns, margins and risk comparisons.'
+            />
+          </label>
+          <p className={styles.caption}>
+            The peer median is a benchmark. Enter a selected target multiple
+            with a sourced assessment to produce an analyst target; leaving it
+            blank shows the peer benchmark range only.
+          </p>
           <div className={styles.bottomActions}>
             <button
               type='button'
@@ -1526,13 +1665,36 @@ export function ValuationModelRunner({
               aria-labelledby='rv-result-title'
             >
               <h4 id='rv-result-title'>
-                Relative valuation results · {rvRun.result.multiple}
+                Relative valuation results · {rvRun.result.multiple} ·{' '}
+                {relativePeriodLabel(rvRun.result.period)}
               </h4>
+              {rvRun.result.selectedTarget ? (
+                <div className={styles.status}>
+                  <strong>
+                    Selected target:{' '}
+                    {format(rvRun.result.selectedTarget.multiple)}× ·{' '}
+                    {settings.currency}{' '}
+                    {format(rvRun.result.selectedTarget.valuePerShare)} per
+                    share
+                  </strong>
+                  <p>
+                    {percent(rvRun.result.selectedTarget.premiumToMedian)}{' '}
+                    premium / discount to the peer median.{' '}
+                    {rvRun.result.selectedTarget.rationale}
+                  </p>
+                </div>
+              ) : (
+                <p>
+                  No analyst target multiple selected. The values below are peer
+                  benchmarks.
+                </p>
+              )}
               <div className={styles.modelFacts}>
                 {rvRun.result.range.map((row) => (
                   <div key={row.percentile}>
                     <small>
-                      {row.percentile}th percentile · {format(row.multiple)}×
+                      Peer {row.percentile}th percentile ·{' '}
+                      {format(row.multiple)}×
                     </small>
                     <strong>
                       {settings.currency} {format(row.valuePerShare)}
@@ -1543,9 +1705,9 @@ export function ValuationModelRunner({
               </div>
               <p>
                 {rvRun.result.included.length} independent peers included.
-                Target metric {format(rvRun.result.targetMetric)}, LTM ended{' '}
-                {rvRun.result.period.endDate}. Percentiles describe this
-                selected peer set.
+                Target metric {format(rvRun.result.targetMetric)},{' '}
+                {relativePeriodLabel(rvRun.result.period)}. Percentiles describe
+                this selected peer set.
               </p>
               {rvRun.result.excluded.length ? (
                 <ul>
@@ -1611,14 +1773,16 @@ export function ValuationModelRunner({
       {model.consensus.length ? (
         <details className={styles.consensus}>
           <summary>
-            Annual consensus reference · kept separate from the DCF forecast
+            Forward consensus · RV earnings sources, separate from the DCF
+            forecast
           </summary>
           <div className={styles.tableWrap}>
             <table className={styles.reviewTable}>
               <thead>
                 <tr>
+                  <th scope='col'>Issuer</th>
                   <th scope='col'>Field</th>
-                  <th scope='col'>Fiscal year end</th>
+                  <th scope='col'>Earnings period</th>
                   <th scope='col'>Value / currency</th>
                   <th scope='col'>Source</th>
                 </tr>
@@ -1626,8 +1790,9 @@ export function ValuationModelRunner({
               <tbody>
                 {model.consensus.map((record) => (
                   <tr key={record.source.id}>
+                    <td>{record.issuerId}</td>
                     <td>{fields[record.field]}</td>
-                    <td>{record.period.endDate}</td>
+                    <td>{relativePeriodLabel(record.period)}</td>
                     <td>
                       {format(record.value)}{' '}
                       {record.currency || 'currency needed'}
