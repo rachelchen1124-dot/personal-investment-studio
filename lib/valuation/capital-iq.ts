@@ -404,6 +404,7 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
             issuerId: security,
             rawValue: raw,
             basis: period.basis,
+            periodLabel: period.key,
             endDate,
             classification: forecast ? 'consensus' : 'reported',
             currency: file.currency,
@@ -421,7 +422,7 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
           })
           if (forecast && !endDate)
             notes.push(
-              `${sheet.name}: ${code} ${period.key} forecasts were mapped but need an explicit, unambiguous period end in Map and confirm. FY+1 is not assumed to mean December year-end or NTM.`
+              `${sheet.name}: ${code} ${period.key} forecasts were mapped but need an explicit, unambiguous period end. Open Build valuation → NTM from your uploaded forecasts to complete FY+1/FY+2 dates once per issuer and calculate NTM automatically. FY+1 is not assumed to mean December year-end or NTM.`
             )
         }
       }
@@ -531,6 +532,12 @@ export function restoreIntake(raw: unknown): {
   const observations = originals.map((rawObservation: unknown): Observation => {
     if (!rawObservation || typeof rawObservation !== 'object') return fail()
     const observation = rawObservation as Observation
+    if (
+      observation.periodLabel !== undefined &&
+      (typeof observation.periodLabel !== 'string' ||
+        observation.periodLabel.length > 100)
+    )
+      return fail()
     const textKeys = [
       'id',
       'fileId',

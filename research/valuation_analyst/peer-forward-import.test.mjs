@@ -106,7 +106,8 @@ function settingsFor(values) {
     nonOperating: '0',
     shares: '100',
     extraShares: '0',
-    price: '10'
+    price: '10',
+    relativePeriod: 'FY:2027-12-31'
   })
   for (const id of ['NYSE:PEER1', 'NYSE:PEER2', 'NYSE:PEER3'])
     settings.peerSelections[id] = {
@@ -119,7 +120,11 @@ function settingsFor(values) {
 test('a standalone native peer forecast sheet flows through import to aligned FY multiples and valuation', () => {
   const values = records()
   assert.ok(values.every((r) => r.issues.length === 0))
-  const preview = peerPreview(prepareModel(values, context), 'EV/EBITDA')
+  const preview = peerPreview(
+    prepareModel(values, context),
+    'EV/EBITDA',
+    'FY:2027-12-31'
+  )
   assert.equal(preview.periodKey, 'FY:2027-12-31')
   assert.equal(preview.target.value, 120)
   assert.deepEqual(

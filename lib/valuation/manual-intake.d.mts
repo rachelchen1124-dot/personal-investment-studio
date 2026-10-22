@@ -24,6 +24,7 @@ export type Observation = {
   issuerId: string
   basis: string
   endDate: string
+  periodLabel?: string
   months?: number
   classification: Classification
   currency: string
@@ -41,7 +42,14 @@ export type NormalizedManual = {
   value: number | null
   currency: string | null
   classification: string
-  period: { basis: string; endDate: string; months: number }
+  period: { basis: string; endDate: string; months: number; label?: string }
+  dateResolution?: string
+  calculation?: {
+    method: 'annual-day-weighted'
+    startDate: string
+    endDate: string
+    components: { sourceId: string; weight: number; days: number; yearDays: number; endDate: string }[]
+  }
   definition: string
   source: {
     id: string

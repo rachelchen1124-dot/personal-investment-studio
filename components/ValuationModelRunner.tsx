@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import type { Multiple } from '@/lib/valuation/engine'
+import { shiftFiscalYear } from '@/lib/valuation/forward-estimates'
 import {
   fields,
   type NormalizedManual,
@@ -84,7 +85,7 @@ function csvDownload(name: string, rows: (string | number | null)[][]) {
 }
 
 export function ValuationModelRunner({
-  records,
+  records: rawRecords,
   context,
   onReview,
   files
@@ -94,13 +95,18 @@ export function ValuationModelRunner({
   onReview: () => void
   files?: Upload[]
 }) {
-  const model = React.useMemo(
-    () => prepareModel(records, context),
-    [records, context]
+  const initialModel = React.useMemo(
+    () => prepareModel(rawRecords, context),
+    [rawRecords, context]
   )
   const [settings, setSettings] = React.useState<RunSettings>(() =>
-    initialSettings(model)
+    initialSettings(initialModel)
   )
+  const model = React.useMemo(
+    () => prepareModel(rawRecords, context, settings.forwardDates),
+    [rawRecords, context, settings.forwardDates]
+  )
+  const records = model.records
   const [dcf, setDcf] = React.useState<{
     signature: string
     run: DcfRun
@@ -130,7 +136,16 @@ export function ValuationModelRunner({
   const signature = JSON.stringify(settings)
   const currentFeedback = feedback?.signature === signature ? feedback : null
   const dcfRun = dcf?.signature === signature ? dcf.run : null
-  const rvRun = relative?.signature === signature ? relative.run : null
+  const automaticRelative = React.useMemo(() => {
+    if (context.mode === 'dcf') return null
+    try {
+      return executeRelative(records, context, settings)
+    } catch {
+      return null
+    }
+  }, [records, context, settings])
+  const rvRun =
+    relative?.signature === signature ? relative.run : automaticRelative
   const preview = React.useMemo(
     () => peerPreview(model, settings.multiple, settings.relativePeriod),
     [model, settings.multiple, settings.relativePeriod]
@@ -186,6 +201,32 @@ export function ValuationModelRunner({
         })
       )
     }))
+    setFeedback(null)
+  }
+  const setForwardDate = (
+    issuerId: string,
+    field: 'fy1' | 'fy2',
+    value: string
+  ) => {
+    setSettings((current) => {
+      const old = current.forwardDates[issuerId] || {}
+      const fy2 =
+        field === 'fy1' &&
+        (!old.fy2 || old.fy2 === shiftFiscalYear(old.fy1 || '', 1))
+          ? shiftFiscalYear(value, 1)
+          : old.fy2
+      return {
+        ...current,
+        forwardDates: {
+          ...current.forwardDates,
+          [issuerId]: { ...old, fy2, [field]: value }
+        },
+        relativePeriod: `NTM:${model.forward.endDate}`,
+        peerProfileReview: false,
+        targetMultiple: '',
+        targetMultipleRationale: ''
+      }
+    })
     setFeedback(null)
   }
   const input = (key: NumericKey, label: string, note?: string) => (
@@ -599,6 +640,18 @@ export function ValuationModelRunner({
       'Source cell',
       'Definition'
     ])
+    for (const record of records.filter((item) => item.calculation))
+      rows.push([
+        'NTM calendarization',
+        record.issuerId,
+        record.field,
+        record.calculation!.startDate,
+        record.calculation!.endDate,
+        record.value,
+        record.source.originalValue,
+        'Approximation: uniform earnings within each fiscal year',
+        record.dateResolution || 'Fiscal dates from uploaded forecasts'
+      ])
     for (const record of records)
       rows.push([
         'Source audit',
@@ -961,6 +1014,110 @@ export function ValuationModelRunner({
             Different financial period ends and nonpositive denominators are
             flagged.
           </p>
+          <section
+            className={styles.mapping}
+            aria-label='Automatic NTM calculation'
+          >
+            <h4>NTM from your uploaded forecasts</h4>
+            <p>
+              NTM estimates and peer multiples calculate automatically when the
+              uploaded forecasts cover the next twelve months. Annual
+              calendarization uses the days falling in each fiscal year and
+              assumes earnings accrue evenly within that year. Calculated NTM is
+              an approximation; reported NTM inputs retain their source basis.
+            </p>
+            {model.forward.dateRequests.length ? (
+              <>
+                <p className={styles.notice}>
+                  The forecast amounts were imported. Complete these missing
+                  fiscal dates here; the website will use them to calculate NTM.
+                  FY+2 is proposed one year after FY+1 and can be edited for a
+                  different fiscal calendar.
+                </p>
+                <div className={styles.tableWrap}>
+                  <table className={styles.reviewTable}>
+                    <caption>
+                      Missing fiscal dates for uploaded FY+1 / FY+2 forecasts
+                    </caption>
+                    <thead>
+                      <tr>
+                        <th scope='col'>Issuer</th>
+                        <th scope='col'>FY+1 end</th>
+                        <th scope='col'>FY+2 end</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {model.forward.dateRequests.map((request) => (
+                        <tr key={request.issuerId}>
+                          <th scope='row'>{request.issuerId}</th>
+                          <td>
+                            <input
+                              type='date'
+                              aria-label={'FY+1 end for ' + request.issuerId}
+                              disabled={request.fy1FromFile}
+                              value={request.fy1}
+                              onChange={(event) =>
+                                setForwardDate(
+                                  request.issuerId,
+                                  'fy1',
+                                  event.target.value
+                                )
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type='date'
+                              aria-label={'FY+2 end for ' + request.issuerId}
+                              disabled={request.fy2FromFile}
+                              value={request.fy2}
+                              onChange={(event) =>
+                                setForwardDate(
+                                  request.issuerId,
+                                  'fy2',
+                                  event.target.value
+                                )
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
+            <button
+              type='button'
+              onClick={() =>
+                chooseRelativePeriod(
+                  settings.multiple,
+                  `NTM:${model.forward.endDate}`
+                )
+              }
+              disabled={
+                !model.relativeRecords.some(
+                  (record) =>
+                    record.field === preview.field &&
+                    record.period.basis === 'NTM' &&
+                    record.period.endDate === model.forward.endDate
+                )
+              }
+            >
+              Use NTM through {model.forward.endDate}
+            </button>
+            {preview.target?.calculation ? (
+              <p className={styles.caption}>
+                Target NTM calculation: {preview.target.source.originalValue}.
+                This method is also used for calculated peer NTM estimates.
+              </p>
+            ) : null}
+            <p className={styles.caption}>
+              The financial screen updates below as inputs change. The full
+              valuation updates automatically after the equity bridge, peer
+              selection, rationales and source reviews are complete.
+            </p>
+          </section>
           <label>
             Valuation multiple
             <select
@@ -999,6 +1156,9 @@ export function ValuationModelRunner({
             {preview.periodLabel}. Native SP_NET_INC needs explicit
             common-equity attribution before P/E can run.
           </p>
+          {preview.targetNtmIssue ? (
+            <p className={styles.notice}>{preview.targetNtmIssue}</p>
+          ) : null}
           {preview.targetGrowth ? (
             <p className={styles.caption}>
               Target annual forecast change:{' '}
@@ -1007,6 +1167,29 @@ export function ValuationModelRunner({
               on capital and risk before choosing a target multiple.
             </p>
           ) : null}
+          {preview.peers.filter(
+            (peer) => !peer.reason && peer.multiple !== null
+          ).length >= 3
+            ? (() => {
+                const values = preview.peers
+                  .filter((peer) => !peer.reason && peer.multiple !== null)
+                  .map((peer) => peer.multiple!)
+                  .toSorted((a, b) => a - b)
+                const median =
+                  values.length % 2
+                    ? values[Math.floor(values.length / 2)]!
+                    : (values[values.length / 2 - 1]! +
+                        values[values.length / 2]!) /
+                      2
+                return (
+                  <p className={styles.status} role='status'>
+                    Automatic financial screen: {values.length} aligned peers ·
+                    median {format(median)}×. Review business comparability
+                    before adopting a target multiple.
+                  </p>
+                )
+              })()
+            : null}
           {preview.basis && preview.basis !== 'LTM' ? (
             <p
               className={
@@ -1045,6 +1228,8 @@ export function ValuationModelRunner({
             />
             I have reviewed currencies, units, market snapshot dates, forecast
             vintages and metric definitions for the target and selected peers.
+            This includes any entered fiscal dates and NTM calendarization
+            assumptions.
           </label>
           <div className={styles.bottomActions}>
             <button
@@ -1174,6 +1359,9 @@ export function ValuationModelRunner({
                       </td>
                       <td>
                         {peer.metric?.period.endDate || 'Missing'}
+                        {peer.metric?.calculation ? (
+                          <small>Calculated NTM · annual day weights</small>
+                        ) : null}
                         <small>
                           {peer.reason ||
                             'Period aligned; review business comparability'}

@@ -93,6 +93,32 @@ when comparable adjacent forecast years exist; no ROIC or growth premium is
 fabricated from missing data. A current-year FY estimate is not NTM. Differing
 fiscal years need calendarized estimates before inclusion.
 
+### Automatic NTM calculation
+
+The browser calculates NTM estimates and a financial peer-screen median from
+uploaded forecasts. Explicitly dated annual forecasts are calendarized to the
+same twelve-month window ending one calendar year after the valuation date.
+Each annual amount is multiplied by overlapping days divided by the days in
+that fiscal year. This is an approximation assuming uniform annual earnings,
+not a claim to reproduce a provider's separately published NTM series. A valid
+uploaded NTM observation is retained in preference to a derived one for that
+same period. Definitions, currencies and the forecast snapshot must agree within
+each derived series; missing coverage, conflicts and future vintages stay visible.
+
+When native FY+1/FY+2 labels have no dates, **Build valuation → NTM from your
+uploaded forecasts** provides one pair of date fields per issuer. Enter FY+1;
+FY+2 is proposed one calendar year later and remains editable for the issuer's
+fiscal calendar. These analyst-entered dates are included in the calculation
+audit and downloaded reports. Original source tables and amounts are retained.
+Saved automatic mappings recover fiscal labels from their original header cells.
+
+Peer multiples and the financial-screen median update immediately. Once the
+capital bridge, peer selections, rationales and source reviews are complete, the
+full relative valuation recalculates automatically. The Calculate button remains
+available to focus the results or report the remaining blocking input. Excel's
+Consensus sheet owns the NTM weighted formulas and links them to original
+Sources cells; Comps links to those calculated NTM values.
+
 Native SP/IQ screens propose IQ market values in millions, SP financial values in
 thousands and individual shares. The user must confirm this mixed-unit profile,
 currency and saved formula results. Pending/error cells remain unavailable;

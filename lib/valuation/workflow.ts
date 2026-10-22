@@ -10,6 +10,10 @@ import {
   type Multiple,
   type Source
 } from './engine.ts'
+import {
+  type ForwardDates,
+  prepareForwardEstimates
+} from './forward-estimates.ts'
 import { type NormalizedManual, validDate } from './manual-intake.mjs'
 
 export type IntakeContext = {
@@ -33,6 +37,7 @@ export type ForecastRow = {
   wc: string
 }
 export type RunSettings = {
+  forwardDates: ForwardDates
   currency: string
   debt: string
   cash: string
@@ -196,7 +201,8 @@ function annualMetric(
 
 export function prepareModel(
   records: NormalizedManual[],
-  context: IntakeContext
+  context: IntakeContext,
+  forwardDates: ForwardDates = {}
 ) {
   const target = records.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
@@ -268,7 +274,12 @@ export function prepareModel(
     }
     return id === record.issuerId ? record : { ...record, issuerId: id }
   })
-  const peerRecords = resolvedInputs.filter(
+  const forward = prepareForwardEstimates(
+    resolvedInputs,
+    context.valuationDate,
+    forwardDates
+  )
+  const peerRecords = forward.records.filter(
     (record) =>
       record.source.section === 'peers' &&
       available(record, context.valuationDate)
@@ -279,7 +290,7 @@ export function prepareModel(
   const targetScreen = peerRecords.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
   )
-  const relativeRecords = resolvedInputs.filter(
+  const relativeRecords = forward.records.filter(
     (record) =>
       ['peers', 'forward'].includes(record.source.section) &&
       available(record, context.valuationDate)
@@ -298,6 +309,13 @@ export function prepareModel(
       ?.currency ||
     ''
   return {
+    records: [
+      ...records.filter(
+        (record) => !['peers', 'forward'].includes(record.source.section)
+      ),
+      ...forward.records
+    ],
+    forward,
     context,
     annual,
     capital,
@@ -309,7 +327,7 @@ export function prepareModel(
       .filter((id) => !sameIssuer(id, context.issuerId))
       .toSorted(),
     relativeRecords,
-    relativeInputs: resolvedInputs,
+    relativeInputs: forward.records,
     peerRecords,
     targetScreen,
     consensus,
@@ -333,6 +351,7 @@ export function initialSettings(
   }
   const wc = model.workingCapital?.value ?? model.tradeWorkingCapital?.value
   return {
+    forwardDates: {},
     currency: model.currency,
     debt: value(model.capital.debt),
     cash: value(model.capital.cash),
@@ -608,6 +627,29 @@ function forecastGrowth(
   records: NormalizedManual[],
   metric?: NormalizedManual
 ) {
+  if (metric?.calculation) {
+    const components = metric.calculation.components
+      .map((item) =>
+        records.find((record) => record.source.id === item.sourceId)
+      )
+      .filter(Boolean) as NormalizedManual[]
+    const from = components[0],
+      to = components.at(-1)
+    if (
+      from &&
+      to &&
+      from !== to &&
+      from.value &&
+      from.value > 0 &&
+      to.value !== null
+    )
+      return {
+        value: to.value / from.value - 1,
+        from: from.period.endDate,
+        to: to.period.endDate,
+        records: [from, to]
+      }
+  }
   if (
     !metric ||
     metric.period.basis === 'LTM' ||
@@ -715,12 +757,18 @@ export function peerPreview(
                   (issue) => issue.code !== 'REVIEW_REQUIRED'
                 )?.message
         : undefined
+      const ntmReason = key.startsWith('NTM:')
+        ? model.forward.statuses.find(
+            (item) => item.issuerId === issuerId && item.field === field
+          )?.reason
+        : undefined
       const reason = !metric
         ? otherMetric &&
           target &&
           otherMetric.period.endDate !== target.period.endDate
           ? `Period ${otherMetric.period.endDate} differs from target ${target.period.endDate}; upload calendarized or aligned estimates.`
-          : unavailableReason ||
+          : ntmReason ||
+            unavailableReason ||
             `Missing or conflicting ${key.split(':')[0] || 'selected-period'} ${field}; upload an aligned earnings value. Values from other periods were not substituted.`
         : !numerator
           ? 'Missing market valuation numerator'
@@ -805,7 +853,22 @@ export function peerPreview(
     forward[0] ||
     choices[0]
   const periodKey = requestedPeriod || defaultPeriod?.key || ''
-  const period = choices.find((choice) => choice.key === periodKey)
+  const period =
+    choices.find((choice) => choice.key === periodKey) ||
+    (periodKey.startsWith('NTM:')
+      ? {
+          key: periodKey,
+          basis: 'NTM' as const,
+          endDate: periodKey.slice(4),
+          label: relativePeriodLabel({
+            basis: 'NTM',
+            endDate: periodKey.slice(4)
+          }),
+          eligiblePeers: 0
+        }
+      : undefined)
+  if (period && !choices.some((choice) => choice.key === period.key))
+    choices.unshift(period)
   const target = one(
     targetMetrics.filter(
       (record) =>
@@ -819,6 +882,14 @@ export function peerPreview(
     periodChoices: choices,
     basis: period?.basis,
     periodLabel: period?.label || 'No mapped earnings period',
+    targetNtmIssue:
+      periodKey.startsWith('NTM:') && !target
+        ? model.forward.statuses.find(
+            (item) =>
+              sameIssuer(item.issuerId, model.context.issuerId) &&
+              item.field === field
+          )?.reason
+        : undefined,
     targetGrowth: forecastGrowth(model.relativeRecords, target),
     peers: peersFor(target, periodKey)
   }
@@ -829,12 +900,12 @@ export function executeRelative(
   context: IntakeContext,
   settings: RunSettings
 ) {
-  const base = shared(records, context, settings)
+  const model = prepareModel(records, context, settings.forwardDates)
+  const base = shared(model.records, context, settings)
   requireValue(
     settings.peerProfileReview,
     'Confirm the peer export currency, mixed-unit profile and saved snapshot date.'
   )
-  const model = prepareModel(records, context)
   const preview = peerPreview(model, settings.multiple, settings.relativePeriod)
   requireValue(
     preview.target,
@@ -855,12 +926,26 @@ export function executeRelative(
     selected.length >= 3,
     'Select at least three independent peers and document a rationale for each.'
   )
-  const used = [
+  const selectedRecords = [
     target,
     ...selected.flatMap(
       (peer) =>
         [peer.metric, peer.numerator].filter(Boolean) as NormalizedManual[]
     )
+  ]
+  const dependencyIds = new Set(
+    selectedRecords.flatMap(
+      (record) =>
+        record.calculation?.components.map((item) => item.sourceId) || []
+    )
+  )
+  const used = [
+    ...new Map(
+      [
+        ...selectedRecords,
+        ...model.records.filter((record) => dependencyIds.has(record.source.id))
+      ].map((record) => [record.source.id, record])
+    ).values()
   ]
   checkUsed(used, settings.currency)
   if (settings.multiple === 'P/E')
