@@ -115,8 +115,7 @@ function settingsFor(records) {
     nonOperating: '0',
     shares: '100',
     extraShares: '0',
-    price: '10',
-    relativePeriod: 'FY:2027-12-31'
+    price: '10'
   })
   for (const id of ['PEER1', 'PEER2', 'PEER3'])
     settings.peerSelections[id] = {
@@ -166,11 +165,7 @@ test('target consensus cannot be combined with trailing peer earnings when peer 
   const records = inputs().filter(
     (r) => r.issuerId === 'DEMO' || r.classification !== 'consensus'
   )
-  const preview = peerPreview(
-    prepareModel(records, context),
-    'EV/EBITDA',
-    'FY:2027-12-31'
-  )
+  const preview = peerPreview(prepareModel(records, context), 'EV/EBITDA')
   assert.equal(preview.target.value, 120)
   assert.ok(
     preview.peers.every(
@@ -240,7 +235,7 @@ test('newer estimate vintages after the valuation date cannot change the selecte
   assert.ok(!run.input.sources.some((s) => s.id === newer.source.id))
 })
 
-test('provided NTM estimates retain their source values and take precedence over calendarized annual forecasts', () => {
+test('genuine NTM estimates are selectable separately and never inferred from FY1', () => {
   const records = inputs()
   for (const [id, value] of [
     ['DEMO', 110],
@@ -252,9 +247,6 @@ test('provided NTM estimates retain their source values and take precedence over
       record(id, 'ebitda', value, 'NTM', '2027-10-21', 'consensus', 'forward')
     )
   const settings = settingsFor(records)
-  settings.relativePeriod = initialSettings(
-    prepareModel(records, context)
-  ).relativePeriod
   assert.equal(settings.relativePeriod, 'NTM:2027-10-21')
   const run = executeRelative(records, context, settings)
   assert.equal(run.result.period.basis, 'NTM')

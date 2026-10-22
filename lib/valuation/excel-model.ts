@@ -151,9 +151,8 @@ function writer(target: ExcelSheet) {
 
 /** One sheet owns each calculation. Formulas and cached values use the same inputs as the UI. */
 export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
-  const { context, settings, dcf, relative } = input
-  const model = prepareModel(input.records, context, settings.forwardDates)
-  const records = model.records
+  const { records, context, settings, dcf, relative } = input
+  const model = prepareModel(records, context)
   const summary = sheet('Valuation')
   const dcfSheet =
     context.mode !== 'rv' && (dcf || !relative) ? sheet('DCF') : null
@@ -203,9 +202,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   for (const [col, label] of sourceHeaders.entries())
     sw.put(excelColumn(col + 2) + '5', label, 'header')
 
-  for (const [index, record] of records
-    .filter((record) => !record.calculation)
-    .entries()) {
+  for (const [index, record] of records.entries()) {
     const row = index + 6
     sourceRows.set(record, row)
     const values: ExcelValue[] = [
@@ -217,7 +214,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       record.period.basis,
       record.period.endDate ? serial(record.period.endDate) : null,
       record.source.asOf ? serial(record.source.asOf) : null,
-      [record.source.locator, record.dateResolution].filter(Boolean).join(' '),
+      record.source.locator,
       record.source.originalValue,
       record.source.originalUnit,
       record.definition,
@@ -902,15 +899,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         const record = unique ? latest[0] : undefined
         if (record) {
           const address = excelColumn(column + 3) + row
-          const expression = record.calculation
-            ? record.calculation.components
-                .map(
-                  (component) =>
-                    `${sourceRef(recordsById.get(component.sourceId)!)}*${component.days}/${component.yearDays}`
-                )
-                .join('+')
-            : sourceRef(record)
-          w.formula(address, expression, record.value, 'linked')
+          w.formula(address, sourceRef(record), record.value, 'linked')
           for (const item of latest)
             consensusRefs.set(item.source.id, `'Consensus'!${address}`)
         } else w.put(excelColumn(column + 3) + row, 'n.a.', 'note')
@@ -957,30 +946,44 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       const numerator =
         'equityValue' in used ? used.equityValue : used.enterpriseValue
       w.put('C' + row, peer.issuerId)
-      w.formula(
-        'D' + row,
-        inputRef(numerator.sourceId),
-        peer.numerator,
-        'linked'
-      )
-      w.formula(
-        'E' + row,
-        inputRef(used.metric.sourceId),
-        peer.denominator,
-        'linked'
-      )
-      w.formula(
-        'F' + row,
-        `IF(AND(ISNUMBER(D${row}),ISNUMBER(E${row}),D${row}>0,E${row}>0),D${row}/E${row},"n.a.")`,
-        peer.multiple
-      )
+      if (used.providedMultiple) {
+        w.put('D' + row, 'n.a. — uploaded ratio', 'note')
+        w.put('E' + row, 'n.a. — uploaded ratio', 'note')
+        w.formula(
+          'F' + row,
+          inputRef(used.providedMultiple.sourceId),
+          peer.multiple,
+          'linked'
+        )
+      } else {
+        w.formula(
+          'D' + row,
+          inputRef(numerator!.sourceId),
+          peer.numerator,
+          'linked'
+        )
+        w.formula(
+          'E' + row,
+          inputRef(used.metric!.sourceId),
+          peer.denominator,
+          'linked'
+        )
+        w.formula(
+          'F' + row,
+          `IF(AND(ISNUMBER(D${row}),ISNUMBER(E${row}),D${row}>0,E${row}>0),D${row}/E${row},"n.a.")`,
+          peer.multiple
+        )
+      }
       w.put('G' + row, serial(context.valuationDate), 'date')
       w.put('H' + row, serial(relative.result.period.endDate), 'date')
       w.put('I' + row, relative.result.period.definition)
       w.put('J' + row, peer.rationale)
       w.put(
         'K' + row,
-        serial(recordsById.get(used.metric.sourceId)!.source.asOf),
+        serial(
+          recordsById.get((used.providedMultiple || used.metric)!.sourceId)!
+            .source.asOf
+        ),
         'date'
       )
       const growth = preview.peers.find(

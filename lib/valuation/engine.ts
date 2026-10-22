@@ -81,7 +81,9 @@ export type Peer = {
   period: MetricPeriod
   enterpriseValue?: Observation
   equityValue?: Observation
-  metric: Observation
+  metric?: Observation
+  // An uploaded forward EV/EBITDA ratio, already expressed in ×.
+  providedMultiple?: Observation
   excludeReason?: string
 }
 
@@ -615,8 +617,8 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
     ticker: string
     issuerId: string
     rationale: string
-    numerator: number
-    denominator: number
+    numerator: number | null
+    denominator: number | null
     multiple: number
     currency: string
   }[] = []
@@ -660,7 +662,27 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
       else if (peer.period.definition !== input.period.definition)
         reason =
           'Metric definition or accounting adjustments differ from the target'
-      else {
+      else if (peer.providedMultiple) {
+        requireInput(
+          input.multiple === 'EV/EBITDA' && peer.period.basis !== 'LTM',
+          'Uploaded forward multiples are supported only for forward EV/EBITDA'
+        )
+        const multiple = read(
+          peer.providedMultiple,
+          `peer ${peer.ticker} uploaded multiple`
+        )
+        if (multiple <= 0) reason = 'N/M: nonpositive uploaded multiple'
+        else
+          included.push({
+            ticker: peer.ticker,
+            issuerId: peer.issuerId,
+            rationale: peer.rationale,
+            numerator: null,
+            denominator: null,
+            multiple,
+            currency: peer.currency
+          })
+      } else {
         const numerator = read(
           input.multiple === 'P/E' ? peer.equityValue : peer.enterpriseValue,
           `peer ${peer.ticker} ${input.multiple === 'P/E' ? 'equityValue' : 'enterpriseValue'}`

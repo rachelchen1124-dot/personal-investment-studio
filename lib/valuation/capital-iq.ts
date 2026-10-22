@@ -120,7 +120,7 @@ function consensusPeriod(header: string) {
 }
 
 function screenMetric(code: string) {
-  // Match earnings amounts only, never ratios such as SP_TEV_EBITDA_FWD.
+  // Ratios have a separate mapping and never become EBITDA amounts.
   const match = code.match(
     /^(?:SP|IQ)_(?:(EST)_)?(TOTAL_REV|REVENUE|EBITDA|EBIT|NET_INC|NI)(?:_(EST|FWD))?$/
   )
@@ -367,6 +367,52 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
           })
         }
         for (const [column, code] of codes.entries()) {
+          if (clean(code).toUpperCase() === 'SP_TEV_EBITDA_FWD') {
+            const raw = clean(row[column])
+            if (numericValue(raw.replace(/\s*[x×]\s*$/i, '')) === null) continue
+            const period = screenPeriod(clean(periods[column]))
+            const dateColumns = codes.flatMap((candidate, index) =>
+              /^(?:SP|IQ)_(?:EST_)?PERIOD_END$/.test(candidate) &&
+              period &&
+              screenPeriod(clean(periods[index]))?.key === period.key
+                ? [index]
+                : []
+            )
+            const dates = [
+              ...new Set(
+                [
+                  period?.endDate,
+                  ...dateColumns.map((index) => clean(row[index]))
+                ].filter((date): date is string => validDate(date))
+              )
+            ]
+            const basis =
+              period && ['FY', 'CY', 'NTM'].includes(period.basis)
+                ? period.basis
+                : ''
+            const endDate = dates.length === 1 ? dates[0]! : ''
+            push({
+              field: 'evEbitdaForward',
+              issuerId: security,
+              rawValue: raw,
+              basis,
+              endDate,
+              classification: 'consensus',
+              currency: '',
+              unit: 'units',
+              availableAt: file.availableAt,
+              definition: capitalIqConsensusDefinition('ebitda'),
+              sign: 'as-reported',
+              sheet: sheet.name,
+              row: rowIndex,
+              column
+            })
+            if (!basis || !endDate)
+              notes.push(
+                'SP_TEV_EBITDA_FWD multiples were imported directly. Confirm their FY, CY or NTM basis and period end in Map and confirm before using them in valuation; an unavailable/#PEND period label is not assumed to mean NTM.'
+              )
+            continue
+          }
           const metric = screenMetric(code)
           if (!metric) continue
           const raw = clean(row[column])
@@ -404,7 +450,6 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
             issuerId: security,
             rawValue: raw,
             basis: period.basis,
-            periodLabel: period.key,
             endDate,
             classification: forecast ? 'consensus' : 'reported',
             currency: file.currency,
@@ -422,12 +467,12 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
           })
           if (forecast && !endDate)
             notes.push(
-              `${sheet.name}: ${code} ${period.key} forecasts were mapped but need an explicit, unambiguous period end. Open Build valuation → NTM from your uploaded forecasts to complete FY+1/FY+2 dates once per issuer and calculate NTM automatically. FY+1 is not assumed to mean December year-end or NTM.`
+              `${sheet.name}: ${code} ${period.key} forecasts were mapped but need an explicit, unambiguous period end in Map and confirm. FY+1 is not assumed to mean December year-end or NTM.`
             )
         }
       }
       notes.push(
-        'Peer market values and LTM/forward earnings columns recognized. Confirm currency, monetary scales, consensus statistic and accounting treatment. IQ market values use millions; SP financial fields use the confirmed financial scale (initially thousands). Other forecast fields need an explicit scale. Missing/#PEND values and forward ratios are not earnings amounts; FY0 is not mixed into LTM. Forward periods retain their own issuer-specific end dates.'
+        'Peer market values, LTM/forward earnings and SP_TEV_EBITDA_FWD multiples recognized. Forward multiples retain their uploaded values in × and do not require peer EBITDA or TEV amounts. Confirm period coverage, snapshot date and EBITDA definition. IQ market values use millions; SP financial fields use the confirmed financial scale (initially thousands). Missing/#PEND values stay missing; FY0 is not mixed into LTM.'
       )
     } else {
       for (const item of mapTemplate(sheet)) push(item)
@@ -532,12 +577,6 @@ export function restoreIntake(raw: unknown): {
   const observations = originals.map((rawObservation: unknown): Observation => {
     if (!rawObservation || typeof rawObservation !== 'object') return fail()
     const observation = rawObservation as Observation
-    if (
-      observation.periodLabel !== undefined &&
-      (typeof observation.periodLabel !== 'string' ||
-        observation.periodLabel.length > 100)
-    )
-      return fail()
     const textKeys = [
       'id',
       'fileId',

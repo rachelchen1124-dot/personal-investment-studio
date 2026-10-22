@@ -8,12 +8,9 @@ import {
   type MetricPeriod,
   type ModelContext,
   type Multiple,
+  type Peer,
   type Source
 } from './engine.ts'
-import {
-  type ForwardDates,
-  prepareForwardEstimates
-} from './forward-estimates.ts'
 import { type NormalizedManual, validDate } from './manual-intake.mjs'
 
 export type IntakeContext = {
@@ -37,7 +34,6 @@ export type ForecastRow = {
   wc: string
 }
 export type RunSettings = {
-  forwardDates: ForwardDates
   currency: string
   debt: string
   cash: string
@@ -201,8 +197,7 @@ function annualMetric(
 
 export function prepareModel(
   records: NormalizedManual[],
-  context: IntakeContext,
-  forwardDates: ForwardDates = {}
+  context: IntakeContext
 ) {
   const target = records.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
@@ -274,12 +269,7 @@ export function prepareModel(
     }
     return id === record.issuerId ? record : { ...record, issuerId: id }
   })
-  const forward = prepareForwardEstimates(
-    resolvedInputs,
-    context.valuationDate,
-    forwardDates
-  )
-  const peerRecords = forward.records.filter(
+  const peerRecords = resolvedInputs.filter(
     (record) =>
       record.source.section === 'peers' &&
       available(record, context.valuationDate)
@@ -290,13 +280,14 @@ export function prepareModel(
   const targetScreen = peerRecords.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
   )
-  const relativeRecords = forward.records.filter(
+  const relativeRecords = resolvedInputs.filter(
     (record) =>
       ['peers', 'forward'].includes(record.source.section) &&
       available(record, context.valuationDate)
   )
   const consensus = relativeRecords.filter(
     (record) =>
+      record.field !== 'evEbitdaForward' &&
       record.classification === 'consensus' &&
       ['FY', 'NTM', 'CY'].includes(record.period.basis) &&
       record.period.months === 12
@@ -309,13 +300,6 @@ export function prepareModel(
       ?.currency ||
     ''
   return {
-    records: [
-      ...records.filter(
-        (record) => !['peers', 'forward'].includes(record.source.section)
-      ),
-      ...forward.records
-    ],
-    forward,
     context,
     annual,
     capital,
@@ -327,7 +311,7 @@ export function prepareModel(
       .filter((id) => !sameIssuer(id, context.issuerId))
       .toSorted(),
     relativeRecords,
-    relativeInputs: forward.records,
+    relativeInputs: resolvedInputs,
     peerRecords,
     targetScreen,
     consensus,
@@ -351,7 +335,6 @@ export function initialSettings(
   }
   const wc = model.workingCapital?.value ?? model.tradeWorkingCapital?.value
   return {
-    forwardDates: {},
     currency: model.currency,
     debt: value(model.capital.debt),
     cash: value(model.capital.cash),
@@ -509,7 +492,9 @@ function checkUsed(records: NormalizedManual[], currency: string) {
       `${record.source.locator}: ${blocking.map((issue) => issue.message).join(' ')}`
     )
     requireValue(
-      monetaryShareFields.has(record.field) || record.currency === currency,
+      monetaryShareFields.has(record.field) ||
+        record.field === 'evEbitdaForward' ||
+        record.currency === currency,
       `${record.source.locator}: source currency ${record.currency || 'missing'} does not match ${currency}. Confirm it in file review; currency conversion is not automatic.`
     )
   }
@@ -627,29 +612,6 @@ function forecastGrowth(
   records: NormalizedManual[],
   metric?: NormalizedManual
 ) {
-  if (metric?.calculation) {
-    const components = metric.calculation.components
-      .map((item) =>
-        records.find((record) => record.source.id === item.sourceId)
-      )
-      .filter(Boolean) as NormalizedManual[]
-    const from = components[0],
-      to = components.at(-1)
-    if (
-      from &&
-      to &&
-      from !== to &&
-      from.value &&
-      from.value > 0 &&
-      to.value !== null
-    )
-      return {
-        value: to.value / from.value - 1,
-        from: from.period.endDate,
-        to: to.period.endDate,
-        records: [from, to]
-      }
-  }
   if (
     !metric ||
     metric.period.basis === 'LTM' ||
@@ -711,6 +673,12 @@ export function peerPreview(
   const targetMetrics = metrics.filter((record) =>
     sameIssuer(record.issuerId, model.context.issuerId)
   )
+  const suppliedMultiples =
+    multiple === 'EV/EBITDA'
+      ? model.relativeInputs.filter(
+          (record) => record.field === 'evEbitdaForward'
+        )
+      : []
   const peersFor = (target: NormalizedManual | undefined, key: string) =>
     model.peers.map((issuerId) => {
       const metric = one(
@@ -730,6 +698,57 @@ export function peerPreview(
               (multiple === 'P/E' ? 'equityValue' : 'enterpriseValue')
         )
       )
+      const directCandidates = suppliedMultiples.filter(
+        (record) => record.issuerId === issuerId
+      )
+      const suppliedMultiple = key.startsWith('LTM:')
+        ? undefined
+        : one(
+            directCandidates.filter(
+              (record) =>
+                `${record.period.basis}:${record.period.endDate}` === key
+            )
+          ) || (!metric ? one(directCandidates) : undefined)
+      if (suppliedMultiple) {
+        const blocking = suppliedMultiple.issues.find(
+          (issue) => issue.code !== 'REVIEW_REQUIRED'
+        )
+        const reason =
+          blocking?.message ||
+          (!['FY', 'CY', 'NTM'].includes(suppliedMultiple.period.basis) ||
+          !validDate(suppliedMultiple.period.endDate)
+            ? 'Uploaded forward multiple found. Confirm its FY, CY or NTM basis and period end in Map and confirm.'
+            : suppliedMultiple.source.asOf !== model.context.valuationDate
+              ? `Multiple snapshot ${suppliedMultiple.source.asOf} does not match valuation date ${model.context.valuationDate}`
+              : suppliedMultiple.classification !== 'consensus'
+                ? 'Confirm this forward multiple as a consensus estimate in Map and confirm.'
+                : !target
+                  ? 'Upload target EBITDA for the same forward period to calculate a target value.'
+                  : target.value! <= 0
+                    ? 'N/M: the target earnings value is not positive'
+                    : suppliedMultiple.value === null ||
+                        suppliedMultiple.value <= 0
+                      ? 'N/M: nonpositive or unavailable uploaded multiple'
+                      : suppliedMultiple.period.basis !== target.period.basis ||
+                          suppliedMultiple.period.endDate !==
+                            target.period.endDate
+                        ? `Uploaded multiple period ${suppliedMultiple.period.basis} ${suppliedMultiple.period.endDate} differs from target ${target.period.basis} ${target.period.endDate}`
+                        : suppliedMultiple.definition !== target.definition
+                          ? 'Accounting definitions differ'
+                          : '')
+        return {
+          issuerId,
+          metric,
+          numerator,
+          suppliedMultiple,
+          reason,
+          multiple:
+            suppliedMultiple.value !== null && suppliedMultiple.value > 0
+              ? suppliedMultiple.value
+              : null,
+          growth: forecastGrowth(model.relativeRecords, metric)
+        }
+      }
       const otherMetric = one(
         metrics.filter(
           (record) =>
@@ -757,18 +776,12 @@ export function peerPreview(
                   (issue) => issue.code !== 'REVIEW_REQUIRED'
                 )?.message
         : undefined
-      const ntmReason = key.startsWith('NTM:')
-        ? model.forward.statuses.find(
-            (item) => item.issuerId === issuerId && item.field === field
-          )?.reason
-        : undefined
       const reason = !metric
         ? otherMetric &&
           target &&
           otherMetric.period.endDate !== target.period.endDate
           ? `Period ${otherMetric.period.endDate} differs from target ${target.period.endDate}; upload calendarized or aligned estimates.`
-          : ntmReason ||
-            unavailableReason ||
+          : unavailableReason ||
             `Missing or conflicting ${key.split(':')[0] || 'selected-period'} ${field}; upload an aligned earnings value. Values from other periods were not substituted.`
         : !numerator
           ? 'Missing market valuation numerator'
@@ -792,6 +805,7 @@ export function peerPreview(
         issuerId,
         metric,
         numerator,
+        suppliedMultiple: undefined,
         reason,
         multiple:
           metric?.value &&
@@ -806,9 +820,14 @@ export function peerPreview(
     })
   const choices = [
     ...new Set(
-      targetMetrics.map(
-        (record) => `${record.period.basis}:${record.period.endDate}`
-      )
+      [
+        ...targetMetrics,
+        ...suppliedMultiples.filter(
+          (record) =>
+            available(record, model.context.valuationDate) &&
+            relativeMetric(record, model.context.valuationDate)
+        )
+      ].map((record) => `${record.period.basis}:${record.period.endDate}`)
     )
   ]
     .map((key) => {
@@ -853,22 +872,7 @@ export function peerPreview(
     forward[0] ||
     choices[0]
   const periodKey = requestedPeriod || defaultPeriod?.key || ''
-  const period =
-    choices.find((choice) => choice.key === periodKey) ||
-    (periodKey.startsWith('NTM:')
-      ? {
-          key: periodKey,
-          basis: 'NTM' as const,
-          endDate: periodKey.slice(4),
-          label: relativePeriodLabel({
-            basis: 'NTM',
-            endDate: periodKey.slice(4)
-          }),
-          eligiblePeers: 0
-        }
-      : undefined)
-  if (period && !choices.some((choice) => choice.key === period.key))
-    choices.unshift(period)
+  const period = choices.find((choice) => choice.key === periodKey)
   const target = one(
     targetMetrics.filter(
       (record) =>
@@ -882,14 +886,6 @@ export function peerPreview(
     periodChoices: choices,
     basis: period?.basis,
     periodLabel: period?.label || 'No mapped earnings period',
-    targetNtmIssue:
-      periodKey.startsWith('NTM:') && !target
-        ? model.forward.statuses.find(
-            (item) =>
-              sameIssuer(item.issuerId, model.context.issuerId) &&
-              item.field === field
-          )?.reason
-        : undefined,
     targetGrowth: forecastGrowth(model.relativeRecords, target),
     peers: peersFor(target, periodKey)
   }
@@ -900,16 +896,16 @@ export function executeRelative(
   context: IntakeContext,
   settings: RunSettings
 ) {
-  const model = prepareModel(records, context, settings.forwardDates)
-  const base = shared(model.records, context, settings)
+  const base = shared(records, context, settings)
   requireValue(
     settings.peerProfileReview,
     'Confirm the peer export currency, mixed-unit profile and saved snapshot date.'
   )
+  const model = prepareModel(records, context)
   const preview = peerPreview(model, settings.multiple, settings.relativePeriod)
   requireValue(
     preview.target,
-    `Map the target company's ${preview.field} for the selected earnings period. Forward comps need target and peer estimates with the same basis, end date and accounting definition.`
+    `Map the target company's ${preview.field} for the selected earnings period. Forward comps need matching target earnings and peer forward multiples or earnings on the same basis, end date and accounting definition.`
   )
   const target = preview.target
   const selected = preview.peers.filter(
@@ -926,26 +922,15 @@ export function executeRelative(
     selected.length >= 3,
     'Select at least three independent peers and document a rationale for each.'
   )
-  const selectedRecords = [
+  const used = [
     target,
     ...selected.flatMap(
       (peer) =>
-        [peer.metric, peer.numerator].filter(Boolean) as NormalizedManual[]
+        (peer.suppliedMultiple
+          ? [peer.suppliedMultiple]
+          : [peer.metric, peer.numerator]
+        ).filter(Boolean) as NormalizedManual[]
     )
-  ]
-  const dependencyIds = new Set(
-    selectedRecords.flatMap(
-      (record) =>
-        record.calculation?.components.map((item) => item.sourceId) || []
-    )
-  )
-  const used = [
-    ...new Map(
-      [
-        ...selectedRecords,
-        ...model.records.filter((record) => dependencyIds.has(record.source.id))
-      ].map((record) => [record.source.id, record])
-    ).values()
   ]
   checkUsed(used, settings.currency)
   if (settings.multiple === 'P/E')
@@ -1010,7 +995,7 @@ export function executeRelative(
           targetMultipleRationale: settings.targetMultipleRationale?.trim()
         }
       : {}),
-    peers: selected.map((peer) => {
+    peers: selected.map((peer): Peer => {
       const selection = settings.peerSelections[peer.issuerId]!
       requireValue(
         selection.rationale.trim().length > 0,
@@ -1020,6 +1005,28 @@ export function executeRelative(
         !selection.research?.applied || selection.research.reviewed,
         `Review the public sources and generated rationale for ${peer.issuerId} before calculating.`
       )
+      requireValue(
+        peer.suppliedMultiple || (peer.metric && peer.numerator),
+        `${peer.issuerId}: missing a required source value.`
+      )
+      if (peer.suppliedMultiple)
+        return {
+          issuerId: peer.issuerId,
+          ticker: peer.issuerId,
+          rationale: selection.rationale,
+          valuationDate: peer.suppliedMultiple.source.asOf,
+          currency: settings.currency,
+          amountUnit: 'millions',
+          period: {
+            basis: preview.basis!,
+            endDate: peer.suppliedMultiple.period.endDate,
+            definition: peer.suppliedMultiple.definition
+          },
+          providedMultiple: {
+            value: peer.suppliedMultiple.value!,
+            sourceId: peer.suppliedMultiple.source.id
+          }
+        }
       requireValue(
         peer.metric && peer.numerator,
         `${peer.issuerId}: missing a required source value.`

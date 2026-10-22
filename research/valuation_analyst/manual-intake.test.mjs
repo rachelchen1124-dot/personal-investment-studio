@@ -22,7 +22,7 @@ const context = { valuationDate: '2026-10-20' }
 
 test('manual intake has four distinct data sections and labels forward-comp requirements', () => {
   assert.deepEqual(sections.map((item) => item.id), ['historicals', 'capital', 'peers', 'forward'])
-  assert.equal(sections[3].label, 'Required for forward comps')
+  assert.equal(sections[3].label, 'Target forecast for forward comps')
   assert.match(sections[2].note, /DCF does not require a peer upload/)
 })
 

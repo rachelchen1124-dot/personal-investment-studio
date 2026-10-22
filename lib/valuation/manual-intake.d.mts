@@ -24,7 +24,6 @@ export type Observation = {
   issuerId: string
   basis: string
   endDate: string
-  periodLabel?: string
   months?: number
   classification: Classification
   currency: string
@@ -42,14 +41,7 @@ export type NormalizedManual = {
   value: number | null
   currency: string | null
   classification: string
-  period: { basis: string; endDate: string; months: number; label?: string }
-  dateResolution?: string
-  calculation?: {
-    method: 'annual-day-weighted'
-    startDate: string
-    endDate: string
-    components: { sourceId: string; weight: number; days: number; yearDays: number; endDate: string }[]
-  }
+  period: { basis: string; endDate: string; months: number }
   definition: string
   source: {
     id: string
@@ -77,7 +69,6 @@ export const sections: {
 export const fields: Record<string, string>
 export function capitalIqConsensusDefinition(field: string): string
 export function numericValue(raw: unknown): number | null
-export function reconcileManualInputs(records: NormalizedManual[]): NormalizedManual[]
 export function validDate(value: unknown): boolean
 export function parseDelimited(text: string): string[][]
 export function cellAddress(row: number, column: number): string

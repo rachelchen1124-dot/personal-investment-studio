@@ -12,13 +12,24 @@ Analyst entry routes to the same workspace.
 3. Peer Data: candidate peers, numerator and denominator values, financial
    definitions, financial period ends and market snapshot dates. DCF does not
    require this section.
-4. Forward Estimates: target and peer forecasts are required for forward relative
-   valuation, but this separate upload is unnecessary if Peer Data already
-   includes them. They remain optional for DCF and trailing relative valuation.
-   Supply the selected metric for the target and at least three peers on the same
-   FY, CY or NTM basis and period end, with issuer identifiers, estimate dates,
-   currencies, units and definitions. Forward multiples alone do not supply the
-   underlying earnings estimates and periods. FY1 is not relabeled NTM.
+4. Forward Estimates: supply the target's earnings forecast for forward relative
+   valuation. Peer forecasts are optional when Peer Data includes prepared
+   `SP_TEV_EBITDA_FWD` multiples. A separate forward upload is unnecessary if
+   Peer Data already includes the target forecast. Target earnings and peer ratios
+   must share a FY, CY or NTM basis, period end and accounting definition. Include
+   issuer identifiers, snapshot dates and the target forecast's currency/units.
+   FY1 is not relabeled NTM and annual forecasts are not calendarized automatically.
+
+`SP_TEV_EBITDA_FWD` is imported as a dimensionless forward EV/EBITDA multiple in
+×, never as an earnings amount or subject to a monetary scale. Peer TEV and EBITDA
+are unnecessary when a prepared ratio is supplied. Numeric values, including an
+`x` or `×` suffix, are retained; unavailable/#PEND values stay missing. Period
+headers such as `NTM 2027-10-22`, or matching `SP_PERIOD_END` columns, provide the
+period. Missing period metadata is confirmed in the existing Map and confirm step,
+using common-period controls only when all ratios share that period. Undated ratios
+remain visible in the peer table but cannot enter valuation until confirmed.
+The Comps export links uploaded ratios directly to their original Sources cells;
+it does not invent underlying peer TEV or EBITDA amounts.
 
 Each area has its own file input, drop target, paste dialog, checklist, CSV
 template and file list. A file's category remains in its manifest and sources.
@@ -92,32 +103,6 @@ requires a sourced growth/returns rationale. Annual estimate changes are shown
 when comparable adjacent forecast years exist; no ROIC or growth premium is
 fabricated from missing data. A current-year FY estimate is not NTM. Differing
 fiscal years need calendarized estimates before inclusion.
-
-### Automatic NTM calculation
-
-The browser calculates NTM estimates and a financial peer-screen median from
-uploaded forecasts. Explicitly dated annual forecasts are calendarized to the
-same twelve-month window ending one calendar year after the valuation date.
-Each annual amount is multiplied by overlapping days divided by the days in
-that fiscal year. This is an approximation assuming uniform annual earnings,
-not a claim to reproduce a provider's separately published NTM series. A valid
-uploaded NTM observation is retained in preference to a derived one for that
-same period. Definitions, currencies and the forecast snapshot must agree within
-each derived series; missing coverage, conflicts and future vintages stay visible.
-
-When native FY+1/FY+2 labels have no dates, **Build valuation → NTM from your
-uploaded forecasts** provides one pair of date fields per issuer. Enter FY+1;
-FY+2 is proposed one calendar year later and remains editable for the issuer's
-fiscal calendar. These analyst-entered dates are included in the calculation
-audit and downloaded reports. Original source tables and amounts are retained.
-Saved automatic mappings recover fiscal labels from their original header cells.
-
-Peer multiples and the financial-screen median update immediately. Once the
-capital bridge, peer selections, rationales and source reviews are complete, the
-full relative valuation recalculates automatically. The Calculate button remains
-available to focus the results or report the remaining blocking input. Excel's
-Consensus sheet owns the NTM weighted formulas and links them to original
-Sources cells; Comps links to those calculated NTM values.
 
 Native SP/IQ screens propose IQ market values in millions, SP financial values in
 thousands and individual shares. The user must confirm this mixed-unit profile,

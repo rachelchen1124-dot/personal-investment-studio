@@ -10,7 +10,6 @@ import {
   normalizeManual,
   type Observation,
   parseDelimited,
-  reconcileManualInputs,
   type SectionId,
   sections,
   templateCsv,
@@ -279,9 +278,70 @@ export function ValuationDataIntake() {
         valuationDate
       })
     )
-    return reconcileManualInputs(normalized)
+    const groups = new Map<string, number[]>()
+    for (const [index, record] of normalized.entries()) {
+      const key = [
+        record.issuerId,
+        record.field,
+        record.classification,
+        record.period.basis,
+        record.period.endDate,
+        record.source.section
+      ].join('|')
+      const indices = groups.get(key) || []
+      indices.push(index)
+      groups.set(key, indices)
+    }
+    for (const indices of groups.values()) {
+      if (indices.length < 2) continue
+      const definitions = new Set(
+        indices.map((index) =>
+          JSON.stringify([
+            normalized[index]!.value,
+            normalized[index]!.currency,
+            normalized[index]!.definition
+          ])
+        )
+      )
+      if (definitions.size > 1) {
+        for (const index of indices)
+          normalized[index]!.issues.push({
+            code: 'CONFLICTING_INPUTS',
+            message:
+              'Competing values or definitions require an explicit reconciliation.'
+          })
+      }
+    }
+    return normalized
   }, [observations, fileMap, valuationDate])
   const selected = fileMap.get(selectedId) || uploads[0]
+  const selectedForwardMultiples = observations.filter(
+    (observation) =>
+      observation.fileId === selected?.id &&
+      observation.field === 'evEbitdaForward'
+  )
+  const commonForwardPeriod = (key: 'basis' | 'endDate') => {
+    const values = [
+      ...new Set(
+        selectedForwardMultiples.map((observation) => observation[key])
+      )
+    ]
+    return values.length === 1 ? values[0] : ''
+  }
+  const updateForwardPeriod = (
+    patch: Partial<Pick<Observation, 'basis' | 'endDate'>>
+  ) => {
+    if (!selected) return
+    setObservations((current) =>
+      current.map((observation) =>
+        observation.fileId === selected.id &&
+        observation.field === 'evEbitdaForward'
+          ? { ...observation, ...patch }
+          : observation
+      )
+    )
+    updateFile(selected.id, {})
+  }
   const sheet =
     selected?.sheets.find((item) => item.name === sheetName) ||
     selected?.sheets[0]
@@ -804,20 +864,20 @@ export function ValuationDataIntake() {
               aria-label='Forward relative valuation requirements'
             >
               <strong>
-                Using forward multiples? Include target and peer forecasts.
+                Using forward EV/EBITDA? Upload prepared peer multiples.
               </strong>
               <p>
-                Provide the forecast metric for the target and at least three
-                peers on the same FY, CY or NTM basis and period end. For
-                example, FY2027 EV/EBITDA needs FY2027 EBITDA for every company.
+                Prepare TEV/EBITDA forward multiples for at least three peers in
+                the SP_TEV_EBITDA_FWD column, then upload the Excel file in Peer
+                Data. The website uses those multiples directly.
               </p>
               <p>
-                Include each issuer&apos;s identifier, period end, estimate
-                as-of date, currency, units and metric definition. Add these
-                forecasts in Peer Data or Forward Estimates; one upload is
-                enough if your peer screen already includes them. A forward
-                multiple alone does not supply the underlying forecast and its
-                period.
+                Include issuer identifiers, the snapshot date, EBITDA definition
+                and FY, CY or NTM period end. Supply the target&apos;s EBITDA
+                estimate for that same period in Peer Data or Forward Estimates.
+                Peer EBITDA forecasts are optional when forward multiples are
+                supplied. Missing period details can be confirmed in Map and
+                confirm.
               </p>
             </aside>
           ) : null}
@@ -950,6 +1010,40 @@ export function ValuationDataIntake() {
                   />
                 </label>
               </div>
+              {selectedForwardMultiples.length ? (
+                <div className={styles.metadata}>
+                  <label>
+                    Uploaded forward-multiple basis (all rows)
+                    <select
+                      value={commonForwardPeriod('basis')}
+                      onChange={(event) =>
+                        updateForwardPeriod({ basis: event.target.value })
+                      }
+                    >
+                      <option value=''>Choose if all rows share a basis</option>
+                      <option value='FY'>FY</option>
+                      <option value='CY'>CY</option>
+                      <option value='NTM'>NTM</option>
+                    </select>
+                  </label>
+                  <label>
+                    Uploaded forward-multiple period end (all rows)
+                    <input
+                      type='date'
+                      value={commonForwardPeriod('endDate')}
+                      onChange={(event) =>
+                        updateForwardPeriod({ endDate: event.target.value })
+                      }
+                    />
+                  </label>
+                  <p className={styles.caption}>
+                    SP_TEV_EBITDA_FWD values are used exactly as uploaded in ×.
+                    Confirm a shared period only when it applies to every ratio
+                    in this file. Use individual cell mappings for different
+                    periods. No NTM estimates are calculated.
+                  </p>
+                </div>
+              ) : null}
               <p className={styles.caption}>
                 The source date is separate from the financial period end.
                 Historical valuations need point-in-time exports; a current

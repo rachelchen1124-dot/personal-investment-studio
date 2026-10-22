@@ -106,8 +106,7 @@ function settingsFor(values) {
     nonOperating: '0',
     shares: '100',
     extraShares: '0',
-    price: '10',
-    relativePeriod: 'FY:2027-12-31'
+    price: '10'
   })
   for (const id of ['NYSE:PEER1', 'NYSE:PEER2', 'NYSE:PEER3'])
     settings.peerSelections[id] = {
@@ -119,12 +118,12 @@ function settingsFor(values) {
 
 test('a standalone native peer forecast sheet flows through import to aligned FY multiples and valuation', () => {
   const values = records()
-  assert.ok(values.every((r) => r.issues.length === 0))
-  const preview = peerPreview(
-    prepareModel(values, context),
-    'EV/EBITDA',
-    'FY:2027-12-31'
+  assert.ok(
+    values
+      .filter((r) => r.field !== 'evEbitdaForward')
+      .every((r) => r.issues.length === 0)
   )
+  const preview = peerPreview(prepareModel(values, context), 'EV/EBITDA')
   assert.equal(preview.periodKey, 'FY:2027-12-31')
   assert.equal(preview.target.value, 120)
   assert.deepEqual(
@@ -137,7 +136,12 @@ test('a standalone native peer forecast sheet flows through import to aligned FY
   )
   assert.ok(preview.peers.every((p) => !p.reason))
   assert.ok(preview.peers.every((p) => p.growth))
-  assert.equal(values.filter((r) => r.value === 99).length, 0)
+  assert.equal(
+    values.filter((r) => r.value === 99 && r.field === 'evEbitdaForward')
+      .length,
+    3
+  )
+  assert.ok(preview.peers.every((p) => !p.suppliedMultiple)) // Undated ratios do not override aligned earnings.
   const run = executeRelative(values, context, settingsFor(values))
   assert.equal(run.result.median.multiple, 10)
   assert.equal(run.result.median.valuePerShare, 10.2)
@@ -154,11 +158,9 @@ test('relative FY labels without period ends produce visible mapping issues rath
     'EV/EBITDA',
     'FY:2027-12-31'
   )
-  assert.ok(preview.peers.every((p) => p.multiple === null))
+  assert.ok(preview.peers.every((p) => p.multiple === 99 && p.reason))
   assert.ok(
-    preview.peers.every((p) =>
-      /period end needs confirmation|Period .* differs/.test(p.reason)
-    )
+    preview.peers.every((p) => /period end|Period .* differs/.test(p.reason))
   )
   assert.ok(
     values.some((r) => r.issues.some((i) => i.code === 'PERIOD_END_REQUIRED'))
@@ -274,7 +276,7 @@ test('different peer fiscal ends remain excluded even after native forecast impo
     'EV/EBITDA',
     'FY:2027-12-31'
   )
-  assert.match(preview.peers[0].reason, /differs/)
-  assert.equal(preview.peers[0].multiple, null)
+  assert.match(preview.peers[0].reason, /differs|period end/)
+  assert.equal(preview.peers[0].multiple, 99) // Retained as a flagged uploaded ratio, never used.
   assert.equal(preview.peers.filter((p) => !p.reason).length, 2)
 })
