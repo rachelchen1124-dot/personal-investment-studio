@@ -58,6 +58,11 @@ export interface NormalizedManual {
     originalEndDate: string
     note: string
   }
+  derivation?: {
+    operation: 'divide'
+    inputSourceIds: [string, string]
+    note: string
+  }
   source: {
     id: string
     provider: string

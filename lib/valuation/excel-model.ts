@@ -155,8 +155,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   const model = prepareModel(
     input.records,
     context,
-    settings.forwardMultiplePeriods,
-    settings.targetNtmEbitda
+    settings.forwardMultiplePeriods
   )
   const records = model.records
   const summary = sheet('Valuation')
@@ -171,7 +170,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     : null
   const sources = sheet(
     'Sources',
-    [3, 3, 24, 28, 18, 14, 18, 14, 16, 16, 70, 22, 16, 70, 45, 70]
+    [3, 3, 24, 28, 18, 14, 18, 14, 16, 16, 70, 22, 16, 70, 45, 70, 70, 85]
   )
   const sheets = [
     summary,
@@ -204,7 +203,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     'Definition',
     'Input issues',
     'File SHA-256',
-    'Forward multiple period mapping / confirmation'
+    'Forward multiple period mapping / confirmation',
+    'Calculation and input sources'
   ]
   for (const [col, label] of sourceHeaders.entries())
     sw.put(excelColumn(col + 2) + '5', label, 'header')
@@ -227,7 +227,10 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       record.definition,
       record.issues.map((issue) => issue.message).join(' '),
       record.source.fileSha256,
-      record.forwardPeriodConfirmation?.note || ''
+      record.forwardPeriodConfirmation?.note || '',
+      record.derivation
+        ? `${record.derivation.note} Inputs: ${record.derivation.inputSourceIds.join('; ')}`
+        : ''
     ]
     for (const [col, value] of values.entries())
       sw.put(
@@ -244,6 +247,22 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   const recordsById = new Map(
     records.map((record) => [record.source.id, record])
   )
+  for (const record of records) {
+    if (!record.derivation) continue
+    const [numerator, denominator] = record.derivation.inputSourceIds.map(
+      (id) => recordsById.get(id)
+    )
+    if (!numerator || !denominator)
+      throw new Error('Missing uploaded inputs for derived target NTM EBITDA.')
+    const a = sourceRef(numerator),
+      b = sourceRef(denominator)
+    sw.formula(
+      'E' + sourceRows.get(record),
+      `IF(AND(ISNUMBER(${a}),ISNUMBER(${b}),${a}>0,${b}>0),${a}/${b},"n.a.")`,
+      record.value,
+      'linked'
+    )
+  }
   const consensusRefs = new Map<string, string>()
   const inputRef = (sourceId: string) => {
     const record = recordsById.get(sourceId)

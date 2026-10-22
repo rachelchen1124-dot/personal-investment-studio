@@ -108,19 +108,8 @@ export function ValuationModelRunner({
     restoreRunSettings(baseModel, initialRunSettings)
   )
   const model = React.useMemo(
-    () =>
-      prepareModel(
-        rawRecords,
-        context,
-        settings.forwardMultiplePeriods,
-        settings.targetNtmEbitda
-      ),
-    [
-      rawRecords,
-      context,
-      settings.forwardMultiplePeriods,
-      settings.targetNtmEbitda
-    ]
+    () => prepareModel(rawRecords, context, settings.forwardMultiplePeriods),
+    [rawRecords, context, settings.forwardMultiplePeriods]
   )
   const records = model.records
   React.useEffect(() => {
@@ -677,7 +666,8 @@ export function ValuationModelRunner({
       'Source as of',
       'Source cell',
       'Definition',
-      'Forward multiple period mapping / confirmation'
+      'Forward multiple period mapping / confirmation',
+      'Calculation and input sources'
     ])
     for (const record of records)
       rows.push([
@@ -694,7 +684,10 @@ export function ValuationModelRunner({
         record.source.asOf,
         record.source.locator,
         record.definition,
-        record.forwardPeriodConfirmation?.note || ''
+        record.forwardPeriodConfirmation?.note || '',
+        record.derivation
+          ? `${record.derivation.note} Inputs: ${record.derivation.inputSourceIds.join('; ')}`
+          : ''
       ])
     csvDownload(
       context.issuerId.replaceAll(/[^a-z\d-]/gi, '-') + '-valuation-report.csv',
@@ -1196,105 +1189,28 @@ export function ValuationModelRunner({
               )}
             </section>
           ) : null}
-          {settings.multiple === 'EV/EBITDA' &&
-          preview.basis === 'NTM' &&
-          (!preview.target ||
-            preview.target.source.id === 'analyst:target-ntm-ebitda') ? (
-            <section className={styles.notice} aria-label='Target NTM EBITDA'>
-              <p>
-                Upload the target’s NTM EBITDA for {preview.periodLabel}, or
-                enter a sourced estimate below. FY EBITDA is a different horizon
-                and cannot be used with these NTM peer multiples.
-              </p>
-              <label>
-                Target NTM EBITDA (
-                {settings.targetNtmEbitda.value
-                  ? settings.targetNtmEbitda.currency
-                  : settings.currency || 'model currency'}{' '}
-                millions)
-                <input
-                  type='number'
-                  step='any'
-                  min='0'
-                  value={
-                    settings.targetNtmEbitda.endDate ===
-                    preview.periodKey.split(':')[1]
-                      ? settings.targetNtmEbitda.value
-                      : ''
-                  }
-                  onChange={(event) => {
-                    setSettings((current) => ({
-                      ...current,
-                      peerProfileReview: false,
-                      targetNtmEbitda: {
-                        value: event.target.value,
-                        endDate: preview.periodKey.split(':')[1]!,
-                        currency: current.currency,
-                        source:
-                          current.targetNtmEbitda.endDate ===
-                          preview.periodKey.split(':')[1]
-                            ? current.targetNtmEbitda.source
-                            : ''
-                      }
-                    }))
-                    setFeedback(null)
-                  }}
-                />
-              </label>
-              <label>
-                Target NTM EBITDA source and definition
-                <textarea
-                  rows={2}
-                  value={
-                    settings.targetNtmEbitda.endDate ===
-                    preview.periodKey.split(':')[1]
-                      ? settings.targetNtmEbitda.source
-                      : ''
-                  }
-                  onChange={(event) => {
-                    setSettings((current) => ({
-                      ...current,
-                      peerProfileReview: false,
-                      targetNtmEbitda: {
-                        value:
-                          current.targetNtmEbitda.endDate ===
-                          preview.periodKey.split(':')[1]
-                            ? current.targetNtmEbitda.value
-                            : '',
-                        endDate: preview.periodKey.split(':')[1]!,
-                        currency:
-                          current.targetNtmEbitda.endDate ===
-                            preview.periodKey.split(':')[1] &&
-                          current.targetNtmEbitda.value
-                            ? current.targetNtmEbitda.currency
-                            : current.currency,
-                        source: event.target.value
-                      }
-                    }))
-                    setFeedback(null)
-                  }}
-                  placeholder='Source, estimate date and EBITDA adjustments; use the same definition as the peers.'
-                />
-              </label>
-              <small>
-                This is a user-supplied estimate. Its value, horizon and source
-                are retained in the intake backup and valuation exports.
-              </small>
-              {settings.targetNtmEbitda.value &&
-              settings.targetNtmEbitda.currency !== settings.currency ? (
-                <p>
-                  Estimate currency {settings.targetNtmEbitda.currency} differs
-                  from model currency {settings.currency}. Enter a converted
-                  amount and document its source before calculating.
-                </p>
-              ) : null}
-            </section>
-          ) : null}
           <p className={styles.caption}>
-            Target {preview.field}: {format(preview.target?.value)} ·{' '}
-            {preview.periodLabel}. Native SP_NET_INC needs explicit
-            common-equity attribution before P/E can run.
+            {context.issuerId} {fields[preview.field] || preview.field}:{' '}
+            {format(preview.target?.value)} · {preview.periodLabel}.
+            {settings.multiple === 'P/E'
+              ? ' Confirm common-equity attribution for SP_NET_INC before calculating P/E.'
+              : ''}
           </p>
+          {preview.target?.derivation ? (
+            <p className={styles.caption}>
+              {context.issuerId} NTM TEV/EBITDA:{' '}
+              {format(
+                records.find(
+                  (record) =>
+                    record.source.id ===
+                    preview.target?.derivation?.inputSourceIds[1]
+                )?.value
+              )}
+              × from the uploaded target row. Target NTM EBITDA is implied by
+              that row’s TEV divided by its NTM multiple; both source cells are
+              linked in the exports.
+            </p>
+          ) : null}
           {preview.targetGrowth ? (
             <p className={styles.caption}>
               Target annual forecast change:{' '}

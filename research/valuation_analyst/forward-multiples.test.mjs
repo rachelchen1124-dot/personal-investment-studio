@@ -628,82 +628,270 @@ test('NTM peer multiples never select a target FY estimate even when FY has enou
   )
 })
 
-test('a separately sourced target NTM EBITDA enables valuation and exports with matching horizon and source lineage', () => {
-  const values = normalize(peers('#PEND'))
-  const settings = settingsFor(values)
+function targetScreen(tev = '1200', ratio = '12') {
+  return {
+    ...file('Target screen', [
+      ['SP_ENTITY_NAME', 'SP_ENTITY_ID', 'IQ_TEV', 'SP_TEV_EBITDA_FWD'],
+      ['', '', '', '#PEND'],
+      ['Synthetic target (NASDAQGS:DEMO)', '100', tev, ratio]
+    ]),
+    currency: 'USD'
+  }
+}
+const screenRecords = () => [
+  ...normalize(peers('#PEND')),
+  ...normalize(targetScreen())
+]
+
+test('target NTM valuation automatically links its own uploaded TEV and forward multiple, excluding the target from peers', () => {
+  const values = screenRecords(),
+    original = structuredClone(values)
+  const model = prepareModel(values, context)
+  const preview = peerPreview(model, 'EV/EBITDA')
+  assert.equal(preview.periodKey, 'NTM:2027-10-22')
+  assert.equal(preview.target.value, 100) // Target 1200 / 12, not the peer median 10.
+  assert.equal(preview.target.currency, 'USD')
+  assert.equal(preview.peers.length, 3)
+  assert.ok(
+    preview.peers.every(
+      (peer) => !peer.reason && peer.issuerId !== 'NASDAQGS:DEMO'
+    )
+  )
+  const relative = executeRelative(values, context, settingsFor(values))
+  assert.equal(relative.result.median.multiple, 10)
+  assert.equal(relative.result.median.enterpriseValue, 1000)
+  assert.equal(relative.result.median.valuePerShare, 8.2)
+  assert.equal(preview.target.derivation.operation, 'divide')
+  assert.match(
+    preview.target.source.locator,
+    /Target screen.*C3.*Target screen.*D3/
+  )
+  assert.deepEqual(values, original)
+  assert.deepEqual(prepareModel(model.records, context).records, model.records)
+  const changed = model.records.map((record) =>
+    record.field === 'enterpriseValue' ? { ...record, value: 1440 } : record
+  )
+  assert.equal(
+    peerPreview(prepareModel(changed, context), 'EV/EBITDA').target.value,
+    120
+  )
+})
+
+test('explicit target NTM EBITDA takes priority and conflicting source earnings are never bypassed', () => {
+  const values = [...screenRecords(), ...normalize(target())]
+  let model = prepareModel(values, context)
+  assert.equal(peerPreview(model, 'EV/EBITDA').target.value, 120)
+  assert.ok(!model.records.some((record) => record.derivation))
+  const existing = values.find((record) => record.field === 'ebitda')
+  values.push({
+    ...existing,
+    value: 999,
+    source: { ...existing.source, id: 'conflicting-target-ntm' }
+  })
+  model = prepareModel(values, context)
+  assert.equal(peerPreview(model, 'EV/EBITDA').target, undefined)
+  assert.ok(!model.records.some((record) => record.derivation))
+})
+
+test('withdrawn manual target NTM inputs cannot replace Excel values on reload or calculation', () => {
+  const values = screenRecords(),
+    settings = settingsFor(values)
   settings.targetNtmEbitda = {
-    value: '130',
+    value: '999',
     endDate: '2027-10-22',
     currency: 'USD',
-    source:
-      'Synthetic target NTM consensus, 22 Oct 2026; EBITDA definition aligned with uploaded peer ratios.'
+    source: 'Withdrawn manual entry'
   }
-  const relative = executeRelative(values, context, settings)
-  assert.equal(relative.result.median.multiple, 10)
-  assert.equal(relative.result.median.valuePerShare, 11.2)
-  assert.equal(relative.input.period.basis, 'NTM')
-  assert.equal(relative.input.targetMetric.value, 130)
-  const observation = relative.audit.find(
-    (r) => r.source.id === 'analyst:target-ntm-ebitda'
+  assert.equal(
+    executeRelative(values, context, settings).input.targetMetric.value,
+    100
   )
-  assert.equal(observation.classification, 'analyst')
-  assert.match(observation.source.locator, /Synthetic target NTM consensus/)
+  assert.ok(
+    !(
+      'targetNtmEbitda' in
+      recoverModelDraft({ signature: 'same source inputs', settings }).settings
+    )
+  )
+  assert.ok(
+    !(
+      'targetNtmEbitda' in
+      restoreRunSettings(prepareModel(values, context), settings)
+    )
+  )
+  values.push({
+    ...normalize(target())[0],
+    value: 999,
+    source: {
+      ...normalize(target())[0].source,
+      id: 'analyst:target-ntm-ebitda'
+    }
+  })
+  assert.equal(
+    executeRelative(values, context, settings).input.targetMetric.value,
+    100
+  )
+})
+
+test('missing, nonpositive, conflicting and incompatible target snapshots cannot produce implied earnings', () => {
+  const base = screenRecords()
+  for (const change of [
+    (values) => values.filter((record) => record.field !== 'enterpriseValue'),
+    (values) =>
+      values.map((record) =>
+        record.field === 'enterpriseValue' ? { ...record, value: 0 } : record
+      ),
+    (values) =>
+      values.map((record) =>
+        record.field === 'enterpriseValue' ? { ...record, value: -5 } : record
+      ),
+    (values) =>
+      values.map((record) =>
+        record.field === 'enterpriseValue'
+          ? { ...record, source: { ...record.source, asOf: '2026-10-21' } }
+          : record
+      ),
+    (values) =>
+      values.map((record) =>
+        record.field === 'enterpriseValue'
+          ? {
+              ...record,
+              source: { ...record.source, provider: 'Different vendor' }
+            }
+          : record
+      ),
+    (values) =>
+      values.map((record) =>
+        record.field === 'enterpriseValue'
+          ? {
+              ...record,
+              issues: [{ code: 'UNIT_REQUIRED', message: 'Confirm units.' }]
+            }
+          : record
+      ),
+    (values) => {
+      const multiple = values.find(
+        (record) =>
+          record.issuerId === 'NASDAQGS:DEMO' &&
+          record.field === 'evEbitdaForward'
+      )
+      return [
+        ...values,
+        {
+          ...multiple,
+          value: 99,
+          source: { ...multiple.source, id: 'conflicting-target-ratio' }
+        }
+      ]
+    }
+  ])
+    assert.ok(
+      !prepareModel(change(base), context).records.some(
+        (record) => record.derivation
+      )
+    )
+  for (const currency of ['', 'EUR']) {
+    const values = base.map((record) =>
+      record.field === 'enterpriseValue'
+        ? {
+            ...record,
+            currency,
+            issues: currency
+              ? []
+              : [
+                  {
+                    code: 'CURRENCY_REQUIRED',
+                    message: 'Confirm the peer export currency.'
+                  }
+                ]
+          }
+        : record
+    )
+    assert.equal(
+      peerPreview(prepareModel(values, context), 'EV/EBITDA').target.value,
+      100
+    )
+    assert.throws(
+      () => executeRelative(values, context, settingsFor(values)),
+      /currency/
+    )
+  }
+})
+
+test('identical duplicate screen rows count each issuer once and never include the target in the peer median', () => {
+  const base = screenRecords()
+  const values = [
+    ...base,
+    ...base.map((record) => ({
+      ...record,
+      source: { ...record.source, id: record.source.id + ':duplicate' }
+    }))
+  ]
+  const preview = peerPreview(prepareModel(values, context), 'EV/EBITDA')
+  assert.equal(preview.target.value, 100)
+  assert.equal(preview.peers.length, 3)
+  assert.equal(
+    executeRelative(values, context, settingsFor(values)).result.median
+      .multiple,
+    10
+  )
+})
+
+test('Excel keeps live formulas from target TEV and NTM multiple through implied EBITDA, Consensus and Comps', () => {
+  const values = screenRecords(),
+    settings = settingsFor(values),
+    relative = executeRelative(values, context, settings)
+  const model = prepareModel(values, context),
+    implied = model.records.find((record) => record.derivation)
+  const [a, b] = implied.derivation.inputSourceIds.map(
+    (id) =>
+      "'Sources'!E" +
+      (model.records.findIndex((record) => record.source.id === id) + 6)
+  )
   const book = buildValuationWorkbook({
     records: values,
     context,
     settings,
     relative
   })
+  const sources = book.sheets.find((sheet) => sheet.name === 'Sources')
+  const cell = sources.cells.find(
+    (cell) => cell.address === 'E' + (model.records.indexOf(implied) + 6)
+  )
+  assert.equal(cell.value, 100)
+  assert.ok(cell.formula.includes(a + '/' + b))
   assert.ok(
-    book.sheets
-      .find((sheet) => sheet.name === 'Consensus')
-      .cells.some(
-        (cell) => cell.value === 130 && cell.formula?.startsWith("'Sources'!")
-      )
+    sources.cells.some(
+      (cell) =>
+        typeof cell.value === 'string' &&
+        cell.value.includes('No FY earnings were substituted')
+    )
   )
+  const consensus = book.sheets.find((sheet) => sheet.name === 'Consensus')
   assert.ok(
-    book.sheets
-      .find((sheet) => sheet.name === 'Sources')
-      .cells.some(
-        (cell) =>
-          typeof cell.value === 'string' &&
-          cell.value.includes('Synthetic target NTM consensus')
-      )
+    consensus.cells.some(
+      (cell) => cell.value === 100 && cell.formula?.startsWith("'Sources'!")
+    )
   )
-  assert.deepEqual(
-    recoverModelDraft({ signature: 'same source inputs', settings }).settings
-      .targetNtmEbitda,
-    settings.targetNtmEbitda
-  )
-  assert.throws(
-    () =>
-      executeRelative(values, context, {
-        ...settings,
-        targetNtmEbitda: { ...settings.targetNtmEbitda, source: '' }
-      }),
-    /Add the source/
-  )
-  assert.throws(
-    () =>
-      executeRelative(values, context, {
-        ...settings,
-        targetNtmEbitda: { ...settings.targetNtmEbitda, currency: 'EUR' }
-      }),
-    /currency/
-  )
-  assert.throws(
-    () =>
-      executeRelative(values, context, {
-        ...settings,
-        targetNtmEbitda: { ...settings.targetNtmEbitda, endDate: '2027-12-31' }
-      }),
-    /target company's ebitda/
-  )
-  const supplied = executeRelative(records(), context, settings)
-  assert.equal(supplied.input.targetMetric.value, 120)
+  const comps = book.sheets.find((sheet) => sheet.name === 'Comps')
   assert.ok(
-    !supplied.audit.some((r) => r.source.id === 'analyst:target-ntm-ebitda')
+    comps.cells.some(
+      (cell) => cell.value === 100 && cell.formula?.startsWith("'Consensus'!")
+    )
   )
+  assert.ok(writeValuationXlsx(book).byteLength > 0)
+})
+
+test('explicit native target NTM EBITDA fields are imported directly without an extra form', () => {
+  for (const code of ['SP_EBITDA_NTM', 'SP_EBITDA_FWD']) {
+    const input = target()
+    input.sheets[0].rows[0][2] = code
+    input.sheets[0].rows[1][2] = '#PEND'
+    const values = [...screenRecords(), ...normalize(input)]
+    const preview = peerPreview(prepareModel(values, context), 'EV/EBITDA')
+    assert.equal(preview.target.value, 120)
+    assert.equal(preview.target.derivation, undefined)
+    assert.ok(preview.peers.every((peer) => !peer.reason))
+  }
 })
 
 test('conflicting explicit NTM period ends stay blocked rather than taking the snapshot anniversary', () => {

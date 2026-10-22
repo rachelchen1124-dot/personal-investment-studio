@@ -123,7 +123,7 @@ function consensusPeriod(header: string) {
 function screenMetric(code: string) {
   // Ratios have a separate mapping and never become EBITDA amounts.
   const match = code.match(
-    /^(?:SP|IQ)_(?:(EST)_)?(TOTAL_REV|REVENUE|EBITDA|EBIT|NET_INC|NI)(?:_(EST|FWD))?$/
+    /^(?:SP|IQ)_(?:(EST)_)?(TOTAL_REV|REVENUE|EBITDA|EBIT|NET_INC|NI)(?:_(EST|FWD|NTM))?$/
   )
   if (!match) return undefined
   const field = {
@@ -417,14 +417,14 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
                     forwardPeriodConfirmation: {
                       originalBasis: period?.basis || '',
                       originalEndDate: '',
-                      note: `SP_TEV_EBITDA_FWD uses NTM ending ${endDate}, twelve months from snapshot ${file.availableAt}. Source period end unavailable; uploaded multiple used unchanged and target NTM EBITDA is required separately.`
+                      note: `SP_TEV_EBITDA_FWD uses NTM ending ${endDate}, twelve months from snapshot ${file.availableAt}. Source period end unavailable; uploaded multiple used unchanged. The target row is linked automatically when its matching TEV is present.`
                     }
                   }
                 : {})
             })
             if (!period || (basis === 'NTM' && !dates.length))
               notes.push(
-                'SP_TEV_EBITDA_FWD is imported as an NTM TEV/EBITDA multiple. If its period label is unavailable/#PEND, the rolling twelve-month horizon uses the export snapshot date, not a fiscal year end. The uploaded ratio is used unchanged; target NTM EBITDA must cover the same horizon.'
+                'SP_TEV_EBITDA_FWD is imported as an NTM TEV/EBITDA multiple. If its period label is unavailable/#PEND, the rolling twelve-month horizon uses the export snapshot date, not a fiscal year end. The uploaded ratio is used unchanged; include the target company’s TEV and NTM multiple in the screen, or supply its matching NTM EBITDA.'
               )
             if (!endDate)
               notes.push(
@@ -436,7 +436,11 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
           if (!metric) continue
           const raw = clean(row[column])
           if (numericValue(raw.replace(/\s+[AE]$/, '')) === null) continue
-          const period = screenPeriod(clean(periods[column]))
+          const period =
+            screenPeriod(clean(periods[column])) ||
+            (metric.field === 'ebitda' && /_EBITDA_(?:NTM|FWD)$/.test(code)
+              ? { key: 'NTM', basis: 'NTM', endDate: '' }
+              : undefined)
           if (!period || period.key === 'FY0' || period.key === 'FY+0') continue
           const dateColumns = codes.flatMap((candidate, index) =>
             /^(?:SP|IQ)_(?:EST_)?PERIOD_END$/.test(candidate) &&
@@ -452,7 +456,12 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
               ].filter((date) => validDate(date))
             )
           ]
-          const endDate = dates.length === 1 ? dates[0]! : ''
+          const endDate =
+            dates.length === 1
+              ? dates[0]!
+              : !dates.length && period.basis === 'NTM'
+                ? ntmPeriodEnd(file.availableAt)
+                : ''
           const forecast =
             period.basis !== 'LTM' &&
             !/\s+A$/.test(raw) &&
