@@ -198,7 +198,7 @@ export function ValuationModelRunner({
           payload.error || 'The public issuer identity could not be verified.'
         )
       const result = payload.profile as PublicCompanyProfile
-      if (payload.researchVersion !== 'public-background-v4')
+      if (payload.researchVersion !== 'public-background-v3')
         throw new Error(
           'The public research response could not be verified. Your existing rationale has been preserved.'
         )
@@ -1089,9 +1089,7 @@ export function ValuationModelRunner({
                         >
                           {researchingIds.includes(peer.issuerId)
                             ? 'Fetching this company…'
-                            : research
-                              ? 'Refresh public information'
-                              : 'Fetch public information'}
+                            : 'Fetch public information'}
                         </button>
                         {researchErrors[peer.issuerId] ? (
                           <p className={styles.error} role='alert'>

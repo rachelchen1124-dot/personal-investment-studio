@@ -6,7 +6,10 @@ import {
 } from '@/lib/valuation/public-background-server'
 
 export const config = { maxDuration: 90 }
-const version = 'public-background-v4'
+// This revision adds optional fields; retain the response contract so an open
+// valuation tab can benefit from the lookup fix without losing entered inputs.
+const version = 'public-background-v3'
+const lookupRevision = 'issuer-discovery-v4'
 
 export default async function handler(
   req: NextApiRequest,
@@ -14,6 +17,7 @@ export default async function handler(
 ) {
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('X-Valuation-Research-Version', version)
+  res.setHeader('X-Valuation-Lookup-Revision', lookupRevision)
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET')
     return res.status(405).json({
@@ -36,7 +40,9 @@ export default async function handler(
       status: 'complete',
       provider: profile.provider || 'SEC'
     })
-    return res.status(200).json({ researchVersion: version, profile })
+    return res
+      .status(200)
+      .json({ researchVersion: version, lookupRevision, profile })
   } catch (err) {
     console.warn('valuation_public_background', {
       version,
