@@ -45,7 +45,8 @@ export type PublicCompanyProfile = {
 }
 
 export type PeerResearch = {
-  target: PublicCompanyProfile
+  target?: PublicCompanyProfile
+  targetError?: string
   peer: PublicCompanyProfile
   draft: string
   applied: boolean
@@ -64,6 +65,19 @@ export type PeerComparison = {
   targetValue?: number | null
   peerValue?: number | null
   period?: string
+}
+
+/** Research selection is independent of earnings, periods and valuation readiness. */
+export function peerResearchIds(
+  peers: { issuerId: string }[],
+  selections: Record<string, PeerSelection>
+) {
+  const selected = peers.filter((peer) => selections[peer.issuerId]?.included)
+  return [
+    ...new Set(
+      (selected.length ? selected : peers).map((peer) => peer.issuerId)
+    )
+  ]
 }
 
 export function publicProfileSource(profile: PublicCompanyProfile) {
@@ -107,10 +121,29 @@ export function extractBusinessTopics(text: string) {
 
 /** Evidence for a draft, not an automatic decision to include a company. */
 export function draftPeerRationale(
-  target: PublicCompanyProfile,
+  target: PublicCompanyProfile | undefined,
   peer: PublicCompanyProfile,
   comparison: PeerComparison
 ) {
+  if (!target) {
+    return [
+      `Public company background for ${peer.name} (${peer.issuerId}). The target company profile could not be retrieved, so business comparability must be assessed manually.`,
+      peer.industry
+        ? `Peer industry: ${peer.industry}${peer.sic ? ` (SEC SIC ${peer.sic})` : ''}.`
+        : '',
+      peer.filing?.businessExcerpt
+        ? `Peer business excerpt (${peer.filing.form}, filed ${peer.filing.filed}): “${peer.filing.businessExcerpt}”`
+        : '',
+      peer.businessDescription
+        ? `Peer public description: “${peer.businessDescription}” Source: ${peer.businessDescriptionUrl}. Wikipedia excerpts are attributed under CC BY-SA; Wikidata descriptions are CC0.`
+        : '',
+      `Source: ${publicProfileSource(peer)} profile ${peer.profileUrl}.${peer.filing ? ` Filing: ${peer.filing.url}, filed ${peer.filing.filed}, available by ${peer.informationDate}.` : ''}`,
+      'Compare product mix, end markets, growth, margins, leverage and accounting adjustments before inclusion.',
+      ...peer.warnings
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+  }
   const parts: string[] = []
   if (target.sic && peer.sic && target.sic === peer.sic) {
     parts.push(
@@ -190,9 +223,10 @@ export function draftPeerRationale(
 /** An async fetch must never replace a rationale edited while it was running. */
 export function applyPeerResearch(
   selection: PeerSelection | undefined,
-  target: PublicCompanyProfile,
+  target: PublicCompanyProfile | undefined,
   peer: PublicCompanyProfile,
-  comparison: PeerComparison
+  comparison: PeerComparison,
+  targetError?: string
 ): PeerSelection {
   const draft = draftPeerRationale(target, peer, comparison)
   const untouchedDraft =
@@ -203,6 +237,13 @@ export function applyPeerResearch(
   return {
     included: selection?.included ?? false,
     rationale: applied ? draft : selection!.rationale,
-    research: { target, peer, draft, applied, reviewed: false }
+    research: {
+      target,
+      ...(targetError ? { targetError } : {}),
+      peer,
+      draft,
+      applied,
+      reviewed: false
+    }
   }
 }

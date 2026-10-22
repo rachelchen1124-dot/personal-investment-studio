@@ -1,3 +1,4 @@
+import { ntmPeriodEnd } from './forward-period.ts'
 import {
   capitalIqConsensusDefinition,
   fields,
@@ -373,8 +374,8 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
             const period = screenPeriod(clean(periods[column]))
             const dateColumns = codes.flatMap((candidate, index) =>
               /^(?:SP|IQ)_(?:EST_)?PERIOD_END$/.test(candidate) &&
-              period &&
-              screenPeriod(clean(periods[index]))?.key === period.key
+              screenPeriod(clean(periods[index]))?.key ===
+                (period?.key || 'NTM')
                 ? [index]
                 : []
             )
@@ -389,8 +390,13 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
             const basis =
               period && ['FY', 'CY', 'NTM'].includes(period.basis)
                 ? period.basis
-                : ''
-            const endDate = dates.length === 1 ? dates[0]! : ''
+                : 'NTM'
+            const endDate =
+              dates.length === 1
+                ? dates[0]!
+                : dates.length === 0 && basis === 'NTM'
+                  ? ntmPeriodEnd(file.availableAt)
+                  : ''
             push({
               field: 'evEbitdaForward',
               issuerId: security,
@@ -405,11 +411,24 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
               sign: 'as-reported',
               sheet: sheet.name,
               row: rowIndex,
-              column
+              column,
+              ...(basis === 'NTM' && !dates.length && endDate
+                ? {
+                    forwardPeriodConfirmation: {
+                      originalBasis: period?.basis || '',
+                      originalEndDate: '',
+                      note: `SP_TEV_EBITDA_FWD uses NTM ending ${endDate}, twelve months from snapshot ${file.availableAt}. Source period end unavailable; uploaded multiple used unchanged and target NTM EBITDA is required separately.`
+                    }
+                  }
+                : {})
             })
-            if (!basis || !endDate)
+            if (!period || (basis === 'NTM' && !dates.length))
               notes.push(
-                'SP_TEV_EBITDA_FWD multiples were imported directly. Confirm their FY, CY or NTM basis and period end in Map and confirm before using them in valuation; an unavailable/#PEND period label is not assumed to mean NTM.'
+                'SP_TEV_EBITDA_FWD is imported as an NTM TEV/EBITDA multiple. If its period label is unavailable/#PEND, the rolling twelve-month horizon uses the export snapshot date, not a fiscal year end. The uploaded ratio is used unchanged; target NTM EBITDA must cover the same horizon.'
+              )
+            if (!endDate)
+              notes.push(
+                'Confirm the forward multiple snapshot and period end in Map and confirm before using it in valuation.'
               )
             continue
           }
@@ -602,6 +621,13 @@ export function restoreIntake(raw: unknown): {
       !Number.isInteger(observation.column) ||
       observation.row < 0 ||
       observation.column < 0 ||
+      (observation.forwardPeriodConfirmation &&
+        ['originalBasis', 'originalEndDate', 'note'].some(
+          (key) =>
+            typeof observation.forwardPeriodConfirmation?.[
+              key as keyof typeof observation.forwardPeriodConfirmation
+            ] !== 'string'
+        )) ||
       !['as-reported', 'negative-capex'].includes(observation.sign)
     )
       return fail()

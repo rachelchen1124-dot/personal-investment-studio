@@ -434,7 +434,7 @@ export function ValuationDataIntake() {
       current.map((observation) =>
         observation.fileId === selected.id &&
         observation.field === 'evEbitdaForward'
-          ? { ...observation, ...patch }
+          ? { ...observation, ...patch, forwardPeriodConfirmation: undefined }
           : observation
       )
     )
@@ -723,7 +723,18 @@ export function ValuationDataIntake() {
     if (!editor) return
     setObservations((current) =>
       current.some((item) => item.id === editor.id)
-        ? current.map((item) => (item.id === editor.id ? editor : item))
+        ? current.map((item) =>
+            item.id === editor.id
+              ? {
+                  ...editor,
+                  forwardPeriodConfirmation:
+                    item.basis === editor.basis &&
+                    item.endDate === editor.endDate
+                      ? editor.forwardPeriodConfirmation
+                      : undefined
+                }
+              : item
+          )
         : [...current, editor]
     )
     updateFile(editor.fileId, {})

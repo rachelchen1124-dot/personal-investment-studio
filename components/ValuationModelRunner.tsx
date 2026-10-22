@@ -9,6 +9,7 @@ import {
 } from '@/lib/valuation/manual-intake.mjs'
 import {
   applyPeerResearch,
+  peerResearchIds,
   type PublicCompanyProfile,
   publicProfileSource
 } from '@/lib/valuation/peer-research'
@@ -18,11 +19,11 @@ import {
   fillForecastDefaults,
   fillValuationDefaults,
   type ForecastRow,
-  initialSettings,
   type IntakeContext,
   peerPreview,
   prepareModel,
   relativePeriodLabel,
+  restoreRunSettings,
   type RunSettings
 } from '@/lib/valuation/workflow'
 import styles from '@/styles/ValuationIntake.module.css'
@@ -103,13 +104,23 @@ export function ValuationModelRunner({
     () => prepareModel(rawRecords, context),
     [rawRecords, context]
   )
-  const [settings, setSettings] = React.useState<RunSettings>(() => ({
-    ...initialSettings(baseModel),
-    ...initialRunSettings
-  }))
+  const [settings, setSettings] = React.useState<RunSettings>(() =>
+    restoreRunSettings(baseModel, initialRunSettings)
+  )
   const model = React.useMemo(
-    () => prepareModel(rawRecords, context, settings.forwardMultiplePeriods),
-    [rawRecords, context, settings.forwardMultiplePeriods]
+    () =>
+      prepareModel(
+        rawRecords,
+        context,
+        settings.forwardMultiplePeriods,
+        settings.targetNtmEbitda
+      ),
+    [
+      rawRecords,
+      context,
+      settings.forwardMultiplePeriods,
+      settings.targetNtmEbitda
+    ]
   )
   const records = model.records
   React.useEffect(() => {
@@ -168,8 +179,16 @@ export function ValuationModelRunner({
       )
     }))
     .filter((item) => item.records.length)
-  const uploadedMultipleValues = uploadedMultiples
-    .map((record) => record.value!)
+  const uploadedMultipleValues = preview.peers
+    .filter(
+      (peer) =>
+        peer.suppliedMultiple &&
+        peer.suppliedMultiple.period.basis === preview.basis &&
+        `${peer.suppliedMultiple.period.basis}:${peer.suppliedMultiple.period.endDate}` ===
+          preview.periodKey &&
+        peer.multiple !== null
+    )
+    .map((peer) => peer.multiple!)
     .toSorted((a, b) => a - b)
   const middleMultiple = Math.floor(uploadedMultipleValues.length / 2)
   const uploadedMedian =
@@ -209,7 +228,7 @@ export function ValuationModelRunner({
           const peer = next.peers.find((item) => item.issuerId === id)
           const updated = {
             ...selection,
-            included: selection.included && Boolean(peer && !peer.reason)
+            included: selection.included
           }
           return [
             id,
@@ -224,7 +243,8 @@ export function ValuationModelRunner({
                     targetValue: next.target?.value,
                     peerValue: peer?.metric?.value,
                     period: peer?.metric?.period.endDate
-                  }
+                  },
+                  selection.research.targetError
                 )
               : updated
           ]
@@ -306,12 +326,25 @@ export function ValuationModelRunner({
     let failed = 0
     let processed = 0
     try {
-      const target = await profile(context.issuerId)
+      let target: PublicCompanyProfile | undefined
+      let targetError: string | undefined
+      const targetLookup = profile(context.issuerId)
+        .then((result) => {
+          target = result
+        })
+        .catch((err: unknown) => {
+          if (controller.signal.aborted) return
+          targetError =
+            err instanceof Error ? err.message : 'Target profile unavailable.'
+          setResearchMessage(
+            `Target lookup needs attention: ${targetError} Peer company lookups will continue.`
+          )
+        })
       async function researchOne(issuerId: string) {
         if (controller.signal.aborted) return
         setResearchingIds((current) => [...current, issuerId])
         try {
-          const peer = await profile(issuerId)
+          const [peer] = await Promise.all([profile(issuerId), targetLookup])
           if (controller.signal.aborted) return
           setSettings((current) => {
             // The user may change the multiple or edit a rationale while the
@@ -338,7 +371,8 @@ export function ValuationModelRunner({
                     targetValue: latest.target?.value,
                     peerValue: item?.metric?.value,
                     period: item?.metric?.period.endDate
-                  }
+                  },
+                  targetError
                 )
               }
             }
@@ -378,7 +412,7 @@ export function ValuationModelRunner({
       await Promise.all([worker(), worker()])
       if (!controller.signal.aborted)
         setResearchMessage(
-          `Fetched public information for ${completed} of ${issuerIds.length} peers.${failed ? ` ${failed} unavailable; retry using the button in the affected row.` : ''} Existing text is preserved. Review the cited drafts before calculating.`
+          `Fetched public information for ${completed} of ${issuerIds.length} peers.${failed ? ` ${failed} unavailable; retry using the button in the affected row.` : ''}${targetError ? ` Target lookup needs attention: ${targetError}` : ''} Existing text is preserved. Review the cited drafts before calculating.`
         )
     } catch (err) {
       if (!controller.signal.aborted)
@@ -643,7 +677,7 @@ export function ValuationModelRunner({
       'Source as of',
       'Source cell',
       'Definition',
-      'Forward multiple period confirmation'
+      'Forward multiple period mapping / confirmation'
     ])
     for (const record of records)
       rows.push([
@@ -1071,9 +1105,9 @@ export function ValuationModelRunner({
                 <option key={period.key} value={period.key}>
                   {period.label} · {period.eligiblePeers} ready peers
                   {period.basis !== 'LTM' &&
-                  uploadedMultiples.length &&
+                  period.uploadedPeers &&
                   !period.eligiblePeers
-                    ? ` · ${uploadedMultiples.length} uploaded multiples found`
+                    ? ` · ${period.uploadedPeers} peer multiples found`
                     : ''}
                 </option>
               ))}
@@ -1085,12 +1119,15 @@ export function ValuationModelRunner({
               aria-label='Uploaded forward EBITDA multiples'
             >
               <strong>
-                {uploadedMultiples.length} uploaded SP_TEV_EBITDA_FWD multiples
-                found · median {format(uploadedMedian)}×
+                {uploadedMultipleValues.length} peer SP_TEV_EBITDA_FWD multiples
+                for {preview.periodLabel} · median {format(uploadedMedian)}×
               </strong>
               <p>
                 The uploaded ratios are the peer TEV/EBITDA inputs. Peer TEV and
-                EBITDA amounts are not required for these rows.
+                EBITDA amounts are not required for these rows.{' '}
+                {uploadedMultiples.length} source observations found; each
+                issuer counts once in the selected-period median. NTM covers the
+                next twelve months from the snapshot date.
               </p>
               {unresolvedMultipleFiles.length ? (
                 <>
@@ -1159,6 +1196,100 @@ export function ValuationModelRunner({
               )}
             </section>
           ) : null}
+          {settings.multiple === 'EV/EBITDA' &&
+          preview.basis === 'NTM' &&
+          (!preview.target ||
+            preview.target.source.id === 'analyst:target-ntm-ebitda') ? (
+            <section className={styles.notice} aria-label='Target NTM EBITDA'>
+              <p>
+                Upload the target’s NTM EBITDA for {preview.periodLabel}, or
+                enter a sourced estimate below. FY EBITDA is a different horizon
+                and cannot be used with these NTM peer multiples.
+              </p>
+              <label>
+                Target NTM EBITDA (
+                {settings.targetNtmEbitda.value
+                  ? settings.targetNtmEbitda.currency
+                  : settings.currency || 'model currency'}{' '}
+                millions)
+                <input
+                  type='number'
+                  step='any'
+                  min='0'
+                  value={
+                    settings.targetNtmEbitda.endDate ===
+                    preview.periodKey.split(':')[1]
+                      ? settings.targetNtmEbitda.value
+                      : ''
+                  }
+                  onChange={(event) => {
+                    setSettings((current) => ({
+                      ...current,
+                      peerProfileReview: false,
+                      targetNtmEbitda: {
+                        value: event.target.value,
+                        endDate: preview.periodKey.split(':')[1]!,
+                        currency: current.currency,
+                        source:
+                          current.targetNtmEbitda.endDate ===
+                          preview.periodKey.split(':')[1]
+                            ? current.targetNtmEbitda.source
+                            : ''
+                      }
+                    }))
+                    setFeedback(null)
+                  }}
+                />
+              </label>
+              <label>
+                Target NTM EBITDA source and definition
+                <textarea
+                  rows={2}
+                  value={
+                    settings.targetNtmEbitda.endDate ===
+                    preview.periodKey.split(':')[1]
+                      ? settings.targetNtmEbitda.source
+                      : ''
+                  }
+                  onChange={(event) => {
+                    setSettings((current) => ({
+                      ...current,
+                      peerProfileReview: false,
+                      targetNtmEbitda: {
+                        value:
+                          current.targetNtmEbitda.endDate ===
+                          preview.periodKey.split(':')[1]
+                            ? current.targetNtmEbitda.value
+                            : '',
+                        endDate: preview.periodKey.split(':')[1]!,
+                        currency:
+                          current.targetNtmEbitda.endDate ===
+                            preview.periodKey.split(':')[1] &&
+                          current.targetNtmEbitda.value
+                            ? current.targetNtmEbitda.currency
+                            : current.currency,
+                        source: event.target.value
+                      }
+                    }))
+                    setFeedback(null)
+                  }}
+                  placeholder='Source, estimate date and EBITDA adjustments; use the same definition as the peers.'
+                />
+              </label>
+              <small>
+                This is a user-supplied estimate. Its value, horizon and source
+                are retained in the intake backup and valuation exports.
+              </small>
+              {settings.targetNtmEbitda.value &&
+              settings.targetNtmEbitda.currency !== settings.currency ? (
+                <p>
+                  Estimate currency {settings.targetNtmEbitda.currency} differs
+                  from model currency {settings.currency}. Enter a converted
+                  amount and document its source before calculating.
+                </p>
+              ) : null}
+            </section>
+          ) : null}
           <p className={styles.caption}>
             Target {preview.field}: {format(preview.target?.value)} ·{' '}
             {preview.periodLabel}. Native SP_NET_INC needs explicit
@@ -1218,29 +1349,20 @@ export function ValuationModelRunner({
             <button
               type='button'
               className={styles.secondary}
-              disabled={
-                researchBusy ||
-                !preview.peers.some(
-                  (peer) =>
-                    !peer.reason &&
-                    settings.peerSelections[peer.issuerId]?.included
-                )
-              }
+              disabled={researchBusy || !preview.peers.length}
               onClick={() =>
                 researchPeers(
-                  preview.peers
-                    .filter(
-                      (peer) =>
-                        !peer.reason &&
-                        settings.peerSelections[peer.issuerId]?.included
-                    )
-                    .map((peer) => peer.issuerId)
+                  peerResearchIds(preview.peers, settings.peerSelections)
                 )
               }
             >
               {researchBusy
                 ? 'Fetching public information…'
-                : 'Fetch public information for selected peers'}
+                : preview.peers.some(
+                      (peer) => settings.peerSelections[peer.issuerId]?.included
+                    )
+                  ? 'Fetch public information for selected peers'
+                  : 'Fetch public information for all peers'}
             </button>
             {researchBusy ? (
               <button
@@ -1258,15 +1380,18 @@ export function ValuationModelRunner({
             ) : null}
           </div>
           <p className={styles.caption}>
-            Use saved SEC filing records where available to create cited drafts.
-            Each record shows its filing and capture dates; newer filings are
-            not checked automatically. If no suitable record is available, a
-            live lookup is attempted and any verified Wikidata / Wikipedia
-            fallback is labeled. Untouched drafts can refresh; your edits are
-            preserved. Only issuer identifiers and the valuation date are sent
-            for lookup; uploaded files stay in your browser. SEC coverage is
-            limited to supported US listings. Current profile metadata is
-            labeled separately from filings available by your valuation date.
+            Public research works before valuation inputs are complete. Select
+            individual peers, or leave all unchecked to research every uploaded
+            peer. Use saved SEC filing records where available to create cited
+            drafts. Each record shows its filing and capture dates; newer
+            filings are not checked automatically. If no suitable record is
+            available, a live lookup is attempted and any verified Wikidata /
+            Wikipedia fallback is labeled. Untouched drafts can refresh; your
+            edits are preserved. Only issuer identifiers and the valuation date
+            are sent for lookup; uploaded files stay in your browser. SEC
+            coverage is limited to supported US listings. Current profile
+            metadata is labeled separately from filings available by your
+            valuation date.
           </p>
           {researchMessage ? (
             <p className={styles.status} role='status'>
@@ -1277,7 +1402,8 @@ export function ValuationModelRunner({
             <table className={styles.reviewTable}>
               <caption className={styles.caption}>
                 Peer {settings.multiple} multiples · {preview.periodLabel}.
-                Flagged rows remain excluded until their checks are resolved.
+                Flagged selections need their valuation checks resolved before
+                calculation.
               </caption>
               <thead>
                 <tr>
@@ -1303,7 +1429,6 @@ export function ValuationModelRunner({
                             checked={Boolean(
                               settings.peerSelections[peer.issuerId]?.included
                             )}
-                            disabled={Boolean(peer.reason)}
                             onChange={(event) =>
                               set('peerSelections', {
                                 ...settings.peerSelections,
@@ -1353,7 +1478,13 @@ export function ValuationModelRunner({
                         {(peer.suppliedMultiple || peer.metric)?.period
                           .endDate || 'Missing'}
                         {peer.suppliedMultiple?.forwardPeriodConfirmation ? (
-                          <small>Period confirmed by user</small>
+                          <small>
+                            {peer.suppliedMultiple.forwardPeriodConfirmation.note.startsWith(
+                              'User confirmed'
+                            )
+                              ? 'Period confirmed by user'
+                              : 'NTM horizon from snapshot'}
+                          </small>
                         ) : null}
                         <small>
                           {peer.reason ||
@@ -1368,7 +1499,6 @@ export function ValuationModelRunner({
                             settings.peerSelections[peer.issuerId]?.rationale ||
                             ''
                           }
-                          disabled={Boolean(peer.reason)}
                           required={Boolean(
                             settings.peerSelections[peer.issuerId]?.included
                           )}
@@ -1411,9 +1541,16 @@ export function ValuationModelRunner({
                         ) : null}
                         {research ? (
                           <>
-                            {!research.target.secAccess &&
+                            {research.targetError ? (
+                              <p className={styles.notice}>
+                                Target company lookup: {research.targetError}{' '}
+                                Peer sources are available below; assess
+                                comparability manually.
+                              </p>
+                            ) : null}
+                            {!research.target?.secAccess &&
                             !research.peer.secAccess &&
-                            (research.target.warnings.length ||
+                            (research.target?.warnings.length ||
                               research.peer.warnings.length) ? (
                               <p className={styles.notice}>
                                 Some filing information is unavailable. Review
@@ -1422,7 +1559,9 @@ export function ValuationModelRunner({
                             ) : null}
                             {(
                               [
-                                ['Target', research.target],
+                                ...(research.target
+                                  ? [['Target', research.target] as const]
+                                  : []),
                                 ['Peer', research.peer]
                               ] as const
                             ).map(([label, profile]) =>
@@ -1467,7 +1606,9 @@ export function ValuationModelRunner({
                                 geography.
                               </p>
                               {[
-                                ['Target', research.target],
+                                ...(research.target
+                                  ? [['Target', research.target] as const]
+                                  : []),
                                 ['Peer', research.peer]
                               ].map(([label, item]) => {
                                 const profile = item as PublicCompanyProfile

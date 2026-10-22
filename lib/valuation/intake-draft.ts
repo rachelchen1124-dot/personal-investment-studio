@@ -108,6 +108,13 @@ export function recoverModelDraft(raw: unknown): ModelDraft | null {
           !period ||
           !['FY', 'CY', 'NTM'].includes(period.basis) ||
           typeof period.endDate !== 'string'
+      )) ||
+    (settings.targetNtmEbitda &&
+      ['value', 'endDate', 'currency', 'source'].some(
+        (key) =>
+          typeof settings.targetNtmEbitda[
+            key as keyof typeof settings.targetNtmEbitda
+          ] !== 'string'
       ))
   )
     return null
@@ -116,6 +123,12 @@ export function recoverModelDraft(raw: unknown): ModelDraft | null {
     settings: {
       ...settings,
       forwardMultiplePeriods: settings.forwardMultiplePeriods || {},
+      targetNtmEbitda: settings.targetNtmEbitda || {
+        value: '',
+        endDate: '',
+        currency: '',
+        source: ''
+      },
       sourceReview: false,
       capitalReview: false,
       dcfReview: false,

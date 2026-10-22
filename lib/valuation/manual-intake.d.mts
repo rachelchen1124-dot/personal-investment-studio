@@ -6,12 +6,12 @@ export type Classification =
   | 'consensus'
   | 'market'
   | 'analyst'
-export type Sheet = {
+export interface Sheet {
   name: string
   rows: string[][]
   cachedFormulaCells?: string[]
 }
-export type Upload = {
+export interface Upload {
   id: string
   name: string
   category: SectionId
@@ -25,7 +25,7 @@ export type Upload = {
   reviewed: boolean
   sheets: Sheet[]
 }
-export type Observation = {
+export interface Observation {
   id: string
   fileId: string
   field: string
@@ -43,8 +43,9 @@ export type Observation = {
   sheet: string
   row: number
   column: number
+  forwardPeriodConfirmation?: NormalizedManual['forwardPeriodConfirmation']
 }
-export type NormalizedManual = {
+export interface NormalizedManual {
   issuerId: string
   field: string
   value: number | null

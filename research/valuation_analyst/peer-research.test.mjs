@@ -3,7 +3,8 @@ import test from 'node:test'
 
 import {
   applyPeerResearch,
-  draftPeerRationale
+  draftPeerRationale,
+  peerResearchIds
 } from '../../lib/valuation/peer-research.ts'
 import {
   extractBusinessExcerpt,
@@ -13,6 +14,42 @@ import {
   selectAnnualFiling,
   validatePeerRequest
 } from '../../lib/valuation/peer-research-server.ts'
+
+test('bulk public research can fetch all or selected peers before financial inputs are ready', () => {
+  const peers = [
+    { issuerId: 'NYSE:ALB', reason: 'Missing NTM target EBITDA' },
+    { issuerId: 'NYSE:ASH', reason: 'Period mismatch' }
+  ]
+  assert.deepEqual(peerResearchIds(peers, {}), ['NYSE:ALB', 'NYSE:ASH'])
+  assert.deepEqual(
+    peerResearchIds(peers, { 'NYSE:ASH': { included: true, rationale: '' } }),
+    ['NYSE:ASH']
+  )
+  assert.deepEqual(peerResearchIds([], {}), [])
+})
+
+test('peer public sources and drafts remain available when target research fails', () => {
+  const peer = profile('PEER')
+  const selection = applyPeerResearch(
+    { included: true, rationale: '' },
+    undefined,
+    peer,
+    { field: 'ebitda', basis: 'NTM' },
+    'Target listing could not be verified.'
+  )
+  assert.match(
+    selection.rationale,
+    /target company profile could not be retrieved/
+  )
+  assert.ok(selection.rationale.includes(peer.profileUrl))
+  assert.equal(selection.included, true)
+  assert.equal(selection.research.target, undefined)
+  assert.equal(
+    selection.research.targetError,
+    'Target listing could not be verified.'
+  )
+  assert.equal(selection.research.reviewed, false)
+})
 
 const tickerData = {
   fields: ['cik', 'name', 'ticker', 'exchange'],

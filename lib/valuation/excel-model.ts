@@ -155,7 +155,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   const model = prepareModel(
     input.records,
     context,
-    settings.forwardMultiplePeriods
+    settings.forwardMultiplePeriods,
+    settings.targetNtmEbitda
   )
   const records = model.records
   const summary = sheet('Valuation')
@@ -203,7 +204,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     'Definition',
     'Input issues',
     'File SHA-256',
-    'Forward multiple period confirmation'
+    'Forward multiple period mapping / confirmation'
   ]
   for (const [col, label] of sourceHeaders.entries())
     sw.put(excelColumn(col + 2) + '5', label, 'header')
@@ -1161,7 +1162,9 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
           'Public source draft reviewed: ' + (research.reviewed ? 'Yes' : 'No'),
           'note'
         )
-        for (const profile of [research.target, research.peer]) {
+        for (const profile of [research.target, research.peer].filter(
+          (item) => item !== undefined
+        )) {
           if (!profile) continue
           for (const line of noteLines(
             `${profile.name} · profile retrieved ${profile.retrievedAt}. Current ${profile.provider || 'SEC'} metadata: ${profile.profileUrl}`

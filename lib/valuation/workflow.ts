@@ -11,7 +11,12 @@ import {
   type Peer,
   type Source
 } from './engine.ts'
-import { type NormalizedManual, validDate } from './manual-intake.mjs'
+import { ntmPeriodEnd } from './forward-period.ts'
+import {
+  capitalIqConsensusDefinition,
+  type NormalizedManual,
+  validDate
+} from './manual-intake.mjs'
 
 export type IntakeContext = {
   company: string
@@ -34,7 +39,9 @@ export type ForecastRow = {
   wc: string
 }
 export type RunSettings = {
+  forwardMultipleBasisVersion: 1
   forwardMultiplePeriods: ForwardMultiplePeriods
+  targetNtmEbitda: TargetNtmEbitda
   currency: string
   debt: string
   cash: string
@@ -61,6 +68,12 @@ export type RunSettings = {
   targetMultipleRationale: string
   peerSelections: Record<string, PeerSelection>
 }
+export type TargetNtmEbitda = {
+  value: string
+  endDate: string
+  currency: string
+  source: string
+}
 export type ForwardMultiplePeriods = Record<
   string,
   {
@@ -68,6 +81,108 @@ export type ForwardMultiplePeriods = Record<
     endDate: string
   }
 >
+
+/** Upgrade older, undated native SP imports and their former FY confirmations.
+ * Explicit periods printed in a source remain authoritative. */
+function normalizeUploadedNtmMultiples(records: NormalizedManual[]) {
+  return records.map((record) => {
+    const originalBasis =
+      record.forwardPeriodConfirmation?.originalBasis ?? record.period.basis
+    const originalEndDate =
+      record.forwardPeriodConfirmation?.originalEndDate ?? record.period.endDate
+    if (
+      record.field !== 'evEbitdaForward' ||
+      record.source.provider !== 'Capital IQ' ||
+      !record.source.id.includes(':auto:') ||
+      originalBasis ||
+      originalEndDate ||
+      !ntmPeriodEnd(record.source.asOf)
+    )
+      return record
+    const endDate = ntmPeriodEnd(record.source.asOf)
+    return {
+      ...record,
+      period: { basis: 'NTM', endDate, months: 12 },
+      forwardPeriodConfirmation: {
+        originalBasis,
+        originalEndDate,
+        note: `SP_TEV_EBITDA_FWD uses NTM ending ${endDate}, twelve months from snapshot ${record.source.asOf}. Corrects any prior fiscal-year assignment of this undated column. Uploaded multiple used unchanged; target NTM EBITDA is required separately.`
+      },
+      issues: record.issues.filter(
+        (issue) =>
+          !['PERIOD_END_REQUIRED', 'PERIOD_BASIS_REQUIRED'].includes(issue.code)
+      )
+    }
+  })
+}
+
+const targetNtmSourceId = 'analyst:target-ntm-ebitda'
+function withTargetNtmEbitda(
+  records: NormalizedManual[],
+  context: IntakeContext,
+  estimate?: TargetNtmEbitda
+) {
+  if (!estimate) return records
+  const sourceRecords = records.filter(
+    (record) => record.source.id !== targetNtmSourceId
+  )
+  if (!estimate.value.trim() || !validDate(estimate.endDate))
+    return sourceRecords
+  // A supplied target consensus observation takes priority over a manual input.
+  if (
+    sourceRecords.some(
+      (record) =>
+        sameIssuer(record.issuerId, context.issuerId) &&
+        record.field === 'ebitda' &&
+        record.period.basis === 'NTM' &&
+        record.period.endDate === estimate.endDate
+    )
+  )
+    return sourceRecords
+  const value = Number(estimate.value)
+  const issues = []
+  if (!Number.isFinite(value) || value <= 0)
+    issues.push({
+      code: 'VALUE_REQUIRED',
+      message: 'Enter positive target NTM EBITDA in millions.'
+    })
+  if (!estimate.source.trim())
+    issues.push({
+      code: 'SOURCE_REQUIRED',
+      message:
+        'Add the source and definition of the target NTM EBITDA estimate.'
+    })
+  if (!/^[A-Z]{3}$/.test(estimate.currency))
+    issues.push({
+      code: 'CURRENCY_REQUIRED',
+      message: 'Confirm the target NTM estimate currency.'
+    })
+  return [
+    ...sourceRecords,
+    {
+      issuerId: context.issuerId,
+      field: 'ebitda',
+      value: Number.isFinite(value) ? value : null,
+      currency: estimate.currency,
+      classification: 'analyst',
+      period: { basis: 'NTM', endDate: estimate.endDate, months: 12 },
+      definition: capitalIqConsensusDefinition('ebitda'),
+      source: {
+        id: targetNtmSourceId,
+        provider: 'User-supplied target NTM estimate',
+        kind: 'analyst',
+        asOf: context.valuationDate,
+        retrievedAt: '',
+        locator: `Target NTM EBITDA input, ${estimate.currency} millions, ending ${estimate.endDate}. Source and definition: ${estimate.source.trim()}`,
+        section: 'forward' as const,
+        originalValue: estimate.value,
+        originalUnit: 'millions',
+        fileSha256: ''
+      },
+      issues
+    }
+  ]
+}
 
 /** Resolve missing ratio metadata only after the user confirms a file's period.
  * The uploaded multiple and its source locator/value remain unchanged. */
@@ -155,7 +270,9 @@ function available(record: NormalizedManual, date: string) {
     validDate(record.source.asOf) &&
     record.source.asOf <= date &&
     validDate(record.period.endDate) &&
-    (record.classification === 'consensus' || record.period.endDate <= date)
+    (record.classification === 'consensus' ||
+      record.source.id === targetNtmSourceId ||
+      record.period.endDate <= date)
   )
 }
 function one(records: NormalizedManual[]) {
@@ -255,11 +372,15 @@ function annualMetric(
 export function prepareModel(
   inputRecords: NormalizedManual[],
   context: IntakeContext,
-  forwardMultiplePeriods: ForwardMultiplePeriods = {}
+  forwardMultiplePeriods: ForwardMultiplePeriods = {},
+  targetNtmEbitda?: TargetNtmEbitda
 ) {
-  const records = confirmForwardMultiplePeriods(
-    inputRecords,
-    forwardMultiplePeriods
+  const records = withTargetNtmEbitda(
+    normalizeUploadedNtmMultiples(
+      confirmForwardMultiplePeriods(inputRecords, forwardMultiplePeriods)
+    ),
+    context,
+    targetNtmEbitda
   )
   const target = records.filter((record) =>
     sameIssuer(record.issuerId, context.issuerId)
@@ -350,7 +471,8 @@ export function prepareModel(
   const consensus = relativeRecords.filter(
     (record) =>
       record.field !== 'evEbitdaForward' &&
-      record.classification === 'consensus' &&
+      (record.classification === 'consensus' ||
+        record.source.id === targetNtmSourceId) &&
       ['FY', 'NTM', 'CY'].includes(record.period.basis) &&
       record.period.months === 12
   )
@@ -424,7 +546,9 @@ export function initialSettings(
   }
   const wc = model.workingCapital?.value ?? model.tradeWorkingCapital?.value
   return {
+    forwardMultipleBasisVersion: 1,
     forwardMultiplePeriods: {},
+    targetNtmEbitda: { value: '', endDate: '', currency: '', source: '' },
     currency: model.currency,
     debt: value(model.capital.debt),
     cash: value(model.capital.cash),
@@ -463,6 +587,37 @@ export function initialSettings(
     targetMultipleRationale: '',
     peerSelections: {}
   }
+}
+
+/** One-time migration: do not retain the old FY dropdown selection for NTM uploads. */
+export function restoreRunSettings(
+  model: ReturnType<typeof prepareModel>,
+  saved?: RunSettings
+): RunSettings {
+  const settings = { ...initialSettings(model), ...saved }
+  if (
+    saved &&
+    saved.forwardMultipleBasisVersion !== 1 &&
+    settings.multiple === 'EV/EBITDA'
+  ) {
+    const ntm = peerPreview(model, settings.multiple).periodChoices.find(
+      (choice) =>
+        choice.basis === 'NTM' &&
+        model.relativeInputs.some(
+          (record) =>
+            record.field === 'evEbitdaForward' &&
+            record.period.basis === 'NTM' &&
+            record.period.endDate === choice.endDate
+        )
+    )
+    if (ntm) {
+      settings.relativePeriod = ntm.key
+      settings.targetMultiple = ''
+      settings.targetMultipleRationale = ''
+      settings.peerProfileReview = false
+    }
+  }
+  return { ...settings, forwardMultipleBasisVersion: 1 }
 }
 
 export function fillValuationDefaults(settings: RunSettings): RunSettings {
@@ -692,7 +847,8 @@ function relativeMetric(record: NormalizedManual, date: string) {
     (record.period.basis === 'LTM'
       ? record.classification === 'reported' && record.period.endDate <= date
       : ['FY', 'CY', 'NTM'].includes(record.period.basis) &&
-        record.classification === 'consensus' &&
+        (record.classification === 'consensus' ||
+          record.source.id === targetNtmSourceId) &&
         record.period.endDate > date)
   )
 }
@@ -934,7 +1090,14 @@ export function peerPreview(
         endDate,
         label: relativePeriodLabel({ basis, endDate }),
         eligiblePeers: peersFor(target, key).filter((peer) => !peer.reason)
-          .length
+          .length,
+        uploadedPeers: peersFor(target, key).filter(
+          (peer) =>
+            peer.suppliedMultiple &&
+            `${peer.suppliedMultiple.period.basis}:${peer.suppliedMultiple.period.endDate}` ===
+              key &&
+            peer.multiple !== null
+        ).length
       }
     })
     .toSorted((a, b) => {
@@ -959,6 +1122,15 @@ export function peerPreview(
     })
   const forward = choices.filter((choice) => choice.basis !== 'LTM')
   const defaultPeriod =
+    forward.find(
+      (choice) =>
+        choice.basis === 'NTM' &&
+        suppliedMultiples.some(
+          (record) =>
+            record.period.basis === 'NTM' &&
+            record.period.endDate === choice.endDate
+        )
+    ) ||
     forward.find((choice) => choice.eligiblePeers >= 3) ||
     forward[0] ||
     choices[0]
@@ -987,7 +1159,12 @@ export function executeRelative(
   context: IntakeContext,
   settings: RunSettings
 ) {
-  const model = prepareModel(records, context, settings.forwardMultiplePeriods)
+  const model = prepareModel(
+    records,
+    context,
+    settings.forwardMultiplePeriods,
+    settings.targetNtmEbitda
+  )
   const base = shared(model.records, context, settings)
   requireValue(
     settings.peerProfileReview,

@@ -13,8 +13,10 @@ import {
   confirmForwardMultiplePeriods,
   initialSettings,
   peerPreview,
-  prepareModel
+  prepareModel,
+  restoreRunSettings
 } from '../../lib/valuation/workflow.ts'
+import { ntmPeriodEnd } from '../../lib/valuation/forward-period.ts'
 import { recoverModelDraft } from '../../lib/valuation/intake-draft.ts'
 
 const context = {
@@ -70,6 +72,17 @@ function normalize(input) {
   return p.observations.map((o) =>
     normalizeManual(o, { ...p.file, reviewed: true }, context)
   )
+}
+function unlabeledManualPeers() {
+  return normalize(peers('#PEND')).map((record) => ({
+    ...record,
+    source: { ...record.source, provider: 'Manually mapped ratio source' },
+    period: { basis: '', endDate: '', months: 12 },
+    issues: [
+      { code: 'PERIOD_END_REQUIRED', message: 'Confirm period end.' },
+      { code: 'PERIOD_BASIS_REQUIRED', message: 'Confirm period basis.' }
+    ]
+  }))
 }
 const records = () => [...normalize(peers()), ...normalize(target())]
 function settingsFor(values) {
@@ -166,20 +179,22 @@ test('uploaded multiples remain visible without a target forecast but cannot pro
   )
 })
 
-test('undated/#PEND period labels are visible as ratios and require explicit period confirmation', () => {
+test('native undated/#PEND forward multiples use NTM from the snapshot rather than a year-end selection', () => {
   const input = peers('#PEND')
   const p = proposeImport(input)
-  assert.match(p.notes.join(' '), /not assumed to mean NTM/)
+  assert.match(p.notes.join(' '), /rolling twelve-month horizon/)
   const values = [...normalize(input), ...normalize(target())]
   let preview = peerPreview(prepareModel(values, context), 'EV/EBITDA')
   assert.deepEqual(
     preview.peers.map((p) => p.multiple),
     [9, 10, 11]
   )
-  assert.ok(preview.peers.every((p) => /period end/.test(p.reason)))
-  assert.throws(
-    () => executeRelative(values, context, settingsFor(values)),
-    /Selected peers/
+  assert.equal(preview.periodKey, 'NTM:2027-10-22')
+  assert.ok(preview.peers.every((p) => !p.reason))
+  assert.equal(
+    executeRelative(values, context, settingsFor(values)).result.median
+      .multiple,
+    10
   )
   const confirmed = p.observations.map((o) =>
     normalizeManual(
@@ -401,11 +416,12 @@ test('SP_TEV_EBITDA_FWD is imported when it is the last column, even with an una
   )
   assert.equal(ratio.value, 9.7)
   assert.match(ratio.source.locator, /!D3$/)
-  assert.equal(ratio.period.endDate, '')
+  assert.equal(ratio.period.basis, 'NTM')
+  assert.equal(ratio.period.endDate, '2027-10-22')
 })
 
 test('one file-level period confirmation enables direct-ratio valuation without changing uploaded inputs', () => {
-  const values = [...normalize(peers('#PEND')), ...normalize(target())]
+  const values = [...unlabeledManualPeers(), ...normalize(target())]
   const original = structuredClone(values)
   const settings = settingsFor(values)
   assert.throws(
@@ -505,7 +521,7 @@ test('confirming missing period metadata retains future-vintage and source-value
 })
 
 test('Excel retains period-confirmation provenance and links the original uploaded ratios', () => {
-  const values = [...normalize(peers('#PEND')), ...normalize(target())]
+  const values = [...unlabeledManualPeers(), ...normalize(target())]
   const settings = settingsFor(values)
   settings.forwardMultiplePeriods = {
     'Peer multiples': { basis: 'NTM', endDate: '2027-10-22' }
@@ -541,4 +557,164 @@ test('Excel retains period-confirmation provenance and links the original upload
     settings.forwardMultiplePeriods
   )
   assert.equal(restored.settings.peerProfileReview, false)
+})
+
+test('NTM horizon follows snapshot anniversaries, including leap days, rather than fiscal-year ends', () => {
+  assert.equal(ntmPeriodEnd('2026-10-21'), '2027-10-21')
+  assert.equal(ntmPeriodEnd('2024-02-29'), '2025-02-28')
+  assert.equal(ntmPeriodEnd('not a date'), '')
+})
+
+test('legacy undated native imports and their old FY confirmations migrate to NTM once without changing values', () => {
+  const values = records().map((record) =>
+    record.field === 'evEbitdaForward'
+      ? {
+          ...record,
+          period: { basis: '', endDate: '', months: 12 },
+          issues: [{ code: 'PERIOD_END_REQUIRED', message: 'Confirm period.' }]
+        }
+      : record
+  )
+  const original = structuredClone(values)
+  const saved = settingsFor(values)
+  delete saved.forwardMultipleBasisVersion
+  saved.relativePeriod = 'FY:2027-12-31'
+  saved.forwardMultiplePeriods = {
+    'Peer multiples': { basis: 'FY', endDate: '2027-12-31' }
+  }
+  const recovered = restoreRunSettings(prepareModel(values, context), saved)
+  assert.equal(recovered.relativePeriod, 'NTM:2027-10-22')
+  assert.equal(recovered.forwardMultipleBasisVersion, 1)
+  assert.equal(recovered.peerProfileReview, false)
+  recovered.peerProfileReview = true
+  const run = executeRelative(values, context, recovered)
+  assert.equal(run.result.median.multiple, 10)
+  assert.ok(
+    run.audit
+      .filter((r) => r.field === 'evEbitdaForward')
+      .every(
+        (r) =>
+          r.period.basis === 'NTM' &&
+          r.period.endDate === '2027-10-22' &&
+          /prior fiscal-year/.test(r.forwardPeriodConfirmation.note)
+      )
+  )
+  assert.deepEqual(values, original)
+  const explicitFyChoice = { ...recovered, relativePeriod: 'FY:2027-12-31' }
+  assert.equal(
+    restoreRunSettings(prepareModel(values, context), explicitFyChoice)
+      .relativePeriod,
+    'FY:2027-12-31'
+  )
+})
+
+test('NTM peer multiples never select a target FY estimate even when FY has enough calculated peers', () => {
+  const values = records().map((record) =>
+    record.field === 'ebitda'
+      ? {
+          ...record,
+          period: { basis: 'FY', endDate: '2027-12-31', months: 12 }
+        }
+      : record
+  )
+  const model = prepareModel(values, context)
+  const preview = peerPreview(model, 'EV/EBITDA')
+  assert.equal(preview.periodKey, 'NTM:2027-10-22')
+  assert.equal(preview.target, undefined)
+  assert.ok(preview.peers.every((peer) => /target EBITDA/.test(peer.reason)))
+  assert.throws(
+    () => executeRelative(values, context, settingsFor(values)),
+    /target company's ebitda/
+  )
+})
+
+test('a separately sourced target NTM EBITDA enables valuation and exports with matching horizon and source lineage', () => {
+  const values = normalize(peers('#PEND'))
+  const settings = settingsFor(values)
+  settings.targetNtmEbitda = {
+    value: '130',
+    endDate: '2027-10-22',
+    currency: 'USD',
+    source:
+      'Synthetic target NTM consensus, 22 Oct 2026; EBITDA definition aligned with uploaded peer ratios.'
+  }
+  const relative = executeRelative(values, context, settings)
+  assert.equal(relative.result.median.multiple, 10)
+  assert.equal(relative.result.median.valuePerShare, 11.2)
+  assert.equal(relative.input.period.basis, 'NTM')
+  assert.equal(relative.input.targetMetric.value, 130)
+  const observation = relative.audit.find(
+    (r) => r.source.id === 'analyst:target-ntm-ebitda'
+  )
+  assert.equal(observation.classification, 'analyst')
+  assert.match(observation.source.locator, /Synthetic target NTM consensus/)
+  const book = buildValuationWorkbook({
+    records: values,
+    context,
+    settings,
+    relative
+  })
+  assert.ok(
+    book.sheets
+      .find((sheet) => sheet.name === 'Consensus')
+      .cells.some(
+        (cell) => cell.value === 130 && cell.formula?.startsWith("'Sources'!")
+      )
+  )
+  assert.ok(
+    book.sheets
+      .find((sheet) => sheet.name === 'Sources')
+      .cells.some(
+        (cell) =>
+          typeof cell.value === 'string' &&
+          cell.value.includes('Synthetic target NTM consensus')
+      )
+  )
+  assert.deepEqual(
+    recoverModelDraft({ signature: 'same source inputs', settings }).settings
+      .targetNtmEbitda,
+    settings.targetNtmEbitda
+  )
+  assert.throws(
+    () =>
+      executeRelative(values, context, {
+        ...settings,
+        targetNtmEbitda: { ...settings.targetNtmEbitda, source: '' }
+      }),
+    /Add the source/
+  )
+  assert.throws(
+    () =>
+      executeRelative(values, context, {
+        ...settings,
+        targetNtmEbitda: { ...settings.targetNtmEbitda, currency: 'EUR' }
+      }),
+    /currency/
+  )
+  assert.throws(
+    () =>
+      executeRelative(values, context, {
+        ...settings,
+        targetNtmEbitda: { ...settings.targetNtmEbitda, endDate: '2027-12-31' }
+      }),
+    /target company's ebitda/
+  )
+  const supplied = executeRelative(records(), context, settings)
+  assert.equal(supplied.input.targetMetric.value, 120)
+  assert.ok(
+    !supplied.audit.some((r) => r.source.id === 'analyst:target-ntm-ebitda')
+  )
+})
+
+test('conflicting explicit NTM period ends stay blocked rather than taking the snapshot anniversary', () => {
+  const input = peers('NTM 2027-12-31')
+  input.sheets[0].rows[0].push('SP_PERIOD_END')
+  input.sheets[0].rows[1].push('NTM')
+  input.sheets[0].rows.slice(2).forEach((row) => row.push('2027-10-22'))
+  const values = [...normalize(input), ...normalize(target())]
+  const preview = peerPreview(prepareModel(values, context), 'EV/EBITDA')
+  assert.ok(preview.peers.every((peer) => peer.reason))
+  assert.ok(
+    preview.peers.every((peer) => peer.suppliedMultiple.period.endDate === '')
+  )
 })
