@@ -49,6 +49,11 @@ forecast windows remain visible as reference data and cannot produce a current
 NTM result. The UI identifies missing matching target/peer estimates and links
 back to Peer Data uploads. Both the engine and Excel export reject stale NTM
 windows; fresh aligned exports restore calculation without relabeling old inputs.
+Native source dates now follow corrected file metadata instead of retaining their
+initial import stamp. Restored legacy native rows repair inherited snapshot/NTM
+dates while retaining explicit row/period overrides. The mapping form shows the
+expected NTM end and groups optional FY-date notices separately from successful
+forward-multiple detection.
 The uploaded/historical mode remains available, with a direct action to enable
 today's date and current quotes together. Quote age, regular-session status and
 the last successful connection check are visible. Checks pause off-screen/offline

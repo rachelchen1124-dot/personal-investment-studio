@@ -57,7 +57,7 @@ const consensusFields: Record<string, string> = {
   'Capital Expenditures': 'capex'
 }
 
-function exportDate(name: string) {
+export function exportDate(name: string) {
   const months = [
     'Jan',
     'Feb',
@@ -178,6 +178,8 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
   const push = (item: Proposed) =>
     observations.push({
       ...item,
+      sourceDateMode: 'file',
+      periodDateMode: item.periodDateMode || 'explicit',
       fileId: file.id,
       id: `auto:${file.id}:${item.sheet}:${item.row}:${item.column}:${item.field}`
     })
@@ -365,6 +367,7 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
             rawValue: clean(row[column]),
             basis: 'instant',
             endDate: file.availableAt,
+            periodDateMode: 'snapshot',
             classification: 'market',
             currency: field === 'basicShares' ? '' : file.currency,
             unit,
@@ -412,6 +415,8 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
               rawValue: raw,
               basis,
               endDate,
+              periodDateMode:
+                !dates.length && basis === 'NTM' ? 'ntm' : 'explicit',
               classification: 'consensus',
               currency: '',
               unit: 'units',
@@ -488,6 +493,8 @@ export function proposeImport(input: Upload, targetId = ''): ImportProposal {
             rawValue: raw,
             basis: period.basis,
             endDate,
+            periodDateMode:
+              !dates.length && period.basis === 'NTM' ? 'ntm' : 'explicit',
             fiscalYear:
               period.basis === 'FY'
                 ? 'fiscalYear' in period
@@ -654,6 +661,12 @@ export function restoreIntake(raw: unknown): {
           observation.fiscalYear > 2200)) ||
       (observation.fiscalQuarter !== undefined &&
         ![1, 2, 3, 4].includes(observation.fiscalQuarter)) ||
+      (observation.sourceDateMode !== undefined &&
+        !['file', 'row'].includes(observation.sourceDateMode)) ||
+      (observation.periodDateMode !== undefined &&
+        !['snapshot', 'ntm', 'explicit'].includes(
+          observation.periodDateMode
+        )) ||
       (observation.forwardPeriodConfirmation &&
         ['originalBasis', 'originalEndDate', 'note'].some(
           (key) =>

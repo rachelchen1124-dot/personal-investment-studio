@@ -1,4 +1,5 @@
 import { proposeImport, restoreIntake } from './capital-iq.ts'
+import { rebaseObservationDates } from './intake-metadata.ts'
 import {
   type NormalizedManual,
   type Observation,
@@ -108,6 +109,9 @@ export function rebuildIntake(raw: unknown) {
         item
       ])
   )
+  const sourceFiles = new Map(
+    proposals.map((proposal) => [proposal.file.id, proposal.file])
+  )
   return {
     context: restored.context,
     files: proposals.map((proposal) => proposal.file),
@@ -116,15 +120,20 @@ export function rebuildIntake(raw: unknown) {
         const native = fiscalMetadata.get(
           JSON.stringify([item.fileId, item.sheet, item.row, item.column])
         )
+        const dated = rebaseObservationDates(
+          sourceFiles.get(item.fileId)!,
+          item,
+          native
+        )
         return native &&
-          item.basis === native.basis &&
-          item.endDate === native.endDate
+          dated.basis === native.basis &&
+          dated.endDate === native.endDate
           ? {
-              ...item,
+              ...dated,
               fiscalYear: item.fiscalYear ?? native.fiscalYear,
               fiscalQuarter: item.fiscalQuarter ?? native.fiscalQuarter
             }
-          : item
+          : dated
       }),
       ...proposals
         .flatMap((proposal) => proposal.observations)

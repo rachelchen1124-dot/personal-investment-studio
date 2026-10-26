@@ -65,6 +65,21 @@ definitions, classification and period end remain explicit. Metadata or mapping
 changes invalidate the file's review flag. Basic and weighted-average EPS shares
 do not become economic diluted shares automatically.
 
+Native mappings record whether their source date follows the file snapshot and
+whether their market/NTM end was inferred from that snapshot. Correcting the file
+date updates those inherited source dates, instant market dates and inferred NTM
+ends together, including native rows recovered from older saved drafts. Explicit
+row dates, source-provided period ends and manual financial-period overrides stay
+fixed. Values, currencies, units and original file hashes are not changed by this
+metadata repair. Date-origin flags are retained in intake backups.
+
+The mapping screen distinguishes the snapshot date from the NTM earnings end,
+shows the expected twelve-month anniversary and offers an explicit correction
+action for an entered mismatch. Successful SP_TEV_EBITDA_FWD detection is shown
+separately from additional FY+1/FY+2 fields whose fiscal period dates need review
+only when those fields are used. Those annual warnings do not block an otherwise
+complete, consistently dated direct-multiple NTM calculation.
+
 The exported JSON includes original source tables, file hashes for original
 uploads, raw observations, normalized inputs, source locators and unresolved
 checks. Amounts and shares normalize to millions; prices remain per share. No FX

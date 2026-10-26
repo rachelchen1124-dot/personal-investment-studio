@@ -40,6 +40,8 @@ export interface Observation {
   currency: string
   unit: Unit
   availableAt: string
+  sourceDateMode?: 'file' | 'row'
+  periodDateMode?: 'snapshot' | 'ntm' | 'explicit'
   definition: string
   sign: 'as-reported' | 'negative-capex'
   sheet: string

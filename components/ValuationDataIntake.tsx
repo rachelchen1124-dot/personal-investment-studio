@@ -3,6 +3,7 @@ import * as React from 'react'
 import type { RunSettings } from '@/lib/valuation/workflow'
 import { ValuationModelRunner } from '@/components/ValuationModelRunner'
 import { proposeImport } from '@/lib/valuation/capital-iq'
+import { ntmPeriodEnd } from '@/lib/valuation/forward-period'
 import {
   loadIntakeDraft,
   type ModelDraft,
@@ -12,6 +13,7 @@ import {
   settingsFromModelDraft,
   valuationModelKey
 } from '@/lib/valuation/intake-draft'
+import { rebaseObservationDates } from '@/lib/valuation/intake-metadata'
 import {
   cellAddress,
   type Classification,
@@ -428,6 +430,7 @@ export function ValuationDataIntake() {
               ...observation,
               ...patch,
               forwardPeriodConfirmation: undefined,
+              periodDateMode: 'explicit',
               fiscalYear: undefined,
               fiscalQuarter: undefined
             }
@@ -467,6 +470,17 @@ export function ValuationDataIntake() {
   )
 
   function updateFile(id: string, patch: Partial<Upload>) {
+    const previous = uploads.find((file) => file.id === id)
+    if (previous && patch.availableAt !== undefined) {
+      const updated = { ...previous, ...patch }
+      setObservations((current) =>
+        current.map((observation) =>
+          observation.fileId === id
+            ? rebaseObservationDates(updated, observation)
+            : observation
+        )
+      )
+    }
     setUploads((current) =>
       current.map((file) =>
         file.id === id
@@ -723,6 +737,18 @@ export function ValuationDataIntake() {
             item.id === editor.id
               ? {
                   ...editor,
+                  sourceDateMode:
+                    item.availableAt !== editor.availableAt
+                      ? editor.availableAt
+                        ? 'row'
+                        : 'file'
+                      : editor.sourceDateMode,
+                  periodDateMode:
+                    item.basis !== editor.basis ||
+                    item.endDate !== editor.endDate ||
+                    item.availableAt !== editor.availableAt
+                      ? 'explicit'
+                      : editor.periodDateMode,
                   fiscalYear:
                     item.basis === editor.basis &&
                     item.endDate === editor.endDate
@@ -741,7 +767,14 @@ export function ValuationDataIntake() {
                 }
               : item
           )
-        : [...current, editor]
+        : [
+            ...current,
+            {
+              ...editor,
+              sourceDateMode: editor.availableAt ? 'row' : 'file',
+              periodDateMode: 'explicit'
+            }
+          ]
     )
     updateFile(editor.fileId, {})
     setEditor(null)
@@ -1172,6 +1205,43 @@ export function ValuationDataIntake() {
                       }
                     />
                   </label>
+                  {commonForwardPeriod('basis') === 'NTM' &&
+                  validDate(selected.availableAt) ? (
+                    <div>
+                      <p
+                        className={
+                          commonForwardPeriod('endDate') ===
+                          ntmPeriodEnd(selected.availableAt)
+                            ? styles.caption
+                            : styles.notice
+                        }
+                        role={
+                          commonForwardPeriod('endDate') ===
+                          ntmPeriodEnd(selected.availableAt)
+                            ? undefined
+                            : 'alert'
+                        }
+                      >
+                        Snapshot date: {selected.availableAt}. The
+                        next-twelve-month earnings period ends{' '}
+                        {ntmPeriodEnd(selected.availableAt)}. Enter the forecast
+                        end date here, not the snapshot date.
+                      </p>
+                      {commonForwardPeriod('endDate') !==
+                      ntmPeriodEnd(selected.availableAt) ? (
+                        <button
+                          type='button'
+                          onClick={() =>
+                            updateForwardPeriod({
+                              endDate: ntmPeriodEnd(selected.availableAt)
+                            })
+                          }
+                        >
+                          Use NTM end {ntmPeriodEnd(selected.availableAt)}
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <p className={styles.caption}>
                     SP_TEV_EBITDA_FWD values are used exactly as uploaded in ×.
                     Confirm a shared period only when it applies to every ratio
@@ -1187,11 +1257,46 @@ export function ValuationDataIntake() {
                 counts use their own scale, and no currency conversion is
                 inferred.
               </p>
-              {importNotes[selected.id]?.map((note) => (
-                <p key={note} className={styles.notice}>
-                  {note}
+              {selectedForwardMultiples.length ? (
+                <p className={styles.status}>
+                  SP_TEV_EBITDA_FWD recognized ·{' '}
+                  {selectedForwardMultiples.length} mapped issuer rows. NTM
+                  valuation uses these uploaded multiples directly; additional
+                  FY forecast columns are separate.
                 </p>
-              ))}
+              ) : null}
+              {selectedForwardMultiples.length &&
+              importNotes[selected.id]?.some((note) =>
+                note.includes('forecasts were mapped but need')
+              ) ? (
+                <details className={styles.hints}>
+                  <summary>
+                    Additional FY forecast columns need dates only if used
+                  </summary>
+                  <p>
+                    The FY+1/FY+2 notices below do not prevent using correctly
+                    dated SP_TEV_EBITDA_FWD multiples for NTM valuation.
+                  </p>
+                  {importNotes[selected.id]
+                    ?.filter((note) =>
+                      note.includes('forecasts were mapped but need')
+                    )
+                    .map((note) => (
+                      <p key={note}>{note}</p>
+                    ))}
+                </details>
+              ) : null}
+              {importNotes[selected.id]
+                ?.filter(
+                  (note) =>
+                    !selectedForwardMultiples.length ||
+                    !note.includes('forecasts were mapped but need')
+                )
+                .map((note) => (
+                  <p key={note} className={styles.notice}>
+                    {note}
+                  </p>
+                ))}
               {sheet.cachedFormulaCells?.length ? (
                 <p className={styles.notice}>
                   This sheet contains saved formula results. Confirm they were
