@@ -97,6 +97,8 @@ export type Peer = {
 export type RelativeValuationInput = ModelInputs & {
   marketSnapshotDate?: string
   priorSnapshotAccepted?: boolean
+  marketDataMode?: 'current-prices' | 'uploaded'
+  marketUpdatedAt?: string
   // P/E needs shares and optional price; EV multiples additionally require the full bridge.
   capitalization: Partial<Capitalization> &
     Pick<Capitalization, 'dilutedShares'>
@@ -832,6 +834,8 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
     method: 'relative-valuation' as const,
     marketSnapshotDate,
     snapshotAgeDays,
+    marketDataMode: input.marketDataMode || 'uploaded',
+    marketUpdatedAt: input.marketUpdatedAt,
     multiple: input.multiple,
     period: input.period,
     targetMetric,
@@ -843,11 +847,15 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
     equityBridge: capital,
     warnings: [
       ...details.warnings,
-      ...(snapshotAgeDays
+      ...(input.marketDataMode === 'current-prices'
         ? [
-            `Valuation as of ${input.context.valuationDate} uses market data from ${marketSnapshotDate} (${snapshotAgeDays} days old), explicitly accepted by the user. Uploaded prices, multiples and NTM horizons have not been refreshed or rolled forward.`
+            'Market prices and EV multiples refresh automatically. Shares, net debt and earnings forecasts are held at their uploaded source vintages; the uploaded NTM horizon is not a newly refreshed consensus estimate. Quote timestamps and original inputs are retained.'
           ]
-        : []),
+        : snapshotAgeDays
+          ? [
+              `Valuation as of ${input.context.valuationDate} uses market data from ${marketSnapshotDate} (${snapshotAgeDays} days old), explicitly accepted by the user. Uploaded prices, multiples and NTM horizons have not been refreshed or rolled forward.`
+            ]
+          : []),
       'The 25th/50th/75th percentile outputs describe the supplied peer set; they are not forecast probabilities or confidence intervals.',
       'Peer selection, metric definitions, calendarization and any outlier exclusions require documented analyst judgment; no outliers are silently removed.',
       'The peer median is a benchmark, not an automatically justified target multiple. A selected target multiple needs a sourced growth and returns assessment.'

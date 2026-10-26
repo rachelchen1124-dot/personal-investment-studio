@@ -39,6 +39,15 @@ RV has been calculated. A separate CSV report remains available. Existing
 intake JSON packages can be reopened without downloading the workbooks again.
 See [manual intake behavior and limits](MANUAL_INTAKE.md).
 
+Current-market mode now advances the valuation date daily and automatically fetches
+target/peer regular-session quotes from Yahoo Finance on load, every five minutes
+while visible, and on return. EV and forward multiples reprice from the original
+uploaded shares, EV base and EBITDA estimates; quote timestamps and financial
+vintages remain separate. Reviewed relative valuations recalculate as quotes change.
+The uploaded/historical mode remains available. Quotes may be delayed, and failed
+quotes never silently reuse an uploaded value as current market data. All repricing
+formulas and original source values are retained in the Excel export.
+
 This is a guided deterministic valuation workflow, not an autonomous research agent.
 Public SEC retrieval was tested against Microsoft on 2026-10-20; reported financials
 through 2026-06-30 were read with filing references. Bridge claims, economic

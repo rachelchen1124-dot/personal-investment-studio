@@ -207,28 +207,49 @@ export function recoverModelDraft(raw: unknown): ModelDraft | null {
     (settings.relativeSnapshot !== undefined &&
       typeof settings.relativeSnapshot !== 'string') ||
     (settings.priorSnapshotReview !== undefined &&
-      typeof settings.priorSnapshotReview !== 'boolean')
+      typeof settings.priorSnapshotReview !== 'boolean') ||
+    (settings.marketDataMode !== undefined &&
+      !['current', 'uploaded'].includes(settings.marketDataMode)) ||
+    (settings.autoRecalculate !== undefined &&
+      typeof settings.autoRecalculate !== 'boolean')
   )
     return null
   const sourceSettings = { ...settings } as RunSettings & {
     targetNtmEbitda?: unknown
   }
   delete sourceSettings.targetNtmEbitda
+  const selections = Object.values(settings.peerSelections).filter(
+    (selection) => selection.included
+  )
+  const continuous =
+    settings.marketDataMode === 'current' &&
+    settings.autoRecalculate === true &&
+    settings.sourceReview === true &&
+    settings.capitalReview === true &&
+    settings.peerProfileReview === true &&
+    selections.length >= 3 &&
+    selections.every(
+      (selection) =>
+        selection.rationale.trim() &&
+        (!selection.research?.applied || selection.research.reviewed)
+    )
   return {
     signature: candidate.signature,
     settings: {
       ...sourceSettings,
       forwardMultiplePeriods: settings.forwardMultiplePeriods || {},
       relativeSnapshot: settings.relativeSnapshot || 'latest',
-      sourceReview: false,
-      capitalReview: false,
+      sourceReview: continuous,
+      capitalReview: continuous,
       dcfReview: false,
-      peerProfileReview: false,
+      peerProfileReview: continuous,
       priorSnapshotReview: false,
       peerSelections: Object.fromEntries(
         Object.entries(settings.peerSelections).map(([id, selection]) => [
           id,
-          { included: selection.included, rationale: selection.rationale }
+          continuous
+            ? { ...selection }
+            : { included: selection.included, rationale: selection.rationale }
         ])
       )
     }

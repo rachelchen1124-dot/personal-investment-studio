@@ -28,6 +28,7 @@ import {
   type Upload,
   validDate
 } from '@/lib/valuation/manual-intake.mjs'
+import { localToday } from '@/lib/valuation/market-prices'
 import styles from '@/styles/ValuationIntake.module.css'
 
 type Mode = 'dcf' | 'rv' | 'both'
@@ -214,6 +215,7 @@ export function ValuationDataIntake() {
   const [company, setCompany] = React.useState('')
   const [issuerId, setIssuerId] = React.useState('')
   const [valuationDate, setValuationDate] = React.useState('')
+  const [autoDate, setAutoDate] = React.useState(true)
   const [mode, setMode] = React.useState<Mode>('both')
   const [uploads, setUploads] = React.useState<Upload[]>([])
   const [observations, setObservations] = React.useState<Observation[]>([])
@@ -260,7 +262,12 @@ export function ValuationDataIntake() {
           setImportNotes(restored.notes)
           setCompany(restored.context.company)
           setIssuerId(restored.context.issuerId)
-          setValuationDate(restored.context.valuationDate)
+          setAutoDate(restored.context.autoDate !== false)
+          setValuationDate(
+            restored.context.autoDate === false
+              ? restored.context.valuationDate
+              : localToday()
+          )
           setMode(restored.context.mode)
           setSelectedId(restored.files[0]?.id || '')
           setModelDraft(recoverModelDraft(draft.model))
@@ -299,6 +306,19 @@ export function ValuationDataIntake() {
     }
   }, [])
   React.useEffect(() => {
+    if (!draftLoaded || !autoDate) return
+    const update = () => setValuationDate(localToday())
+    update()
+    const timer = window.setInterval(update, 60_000)
+    window.addEventListener('focus', update)
+    document.addEventListener('visibilitychange', update)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', update)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [draftLoaded, autoDate])
+  React.useEffect(() => {
     if (!draftLoaded || !valuationDate) return
     let active = true
     if (uploads.length) setDraftStatus('Saving your valuation on this browser…')
@@ -307,7 +327,7 @@ export function ValuationDataIntake() {
         schema: 'valuation-browser-draft-v1',
         pack: {
           schema: 'valuation-manual-intake-v1',
-          context: { company, issuerId, valuationDate, mode },
+          context: { company, issuerId, valuationDate, mode, autoDate },
           files: uploads,
           originalObservations: observations
         },
@@ -338,6 +358,7 @@ export function ValuationDataIntake() {
     company,
     issuerId,
     valuationDate,
+    autoDate,
     mode,
     uploads,
     observations,
@@ -730,7 +751,7 @@ export function ValuationDataIntake() {
   function exportPack() {
     const pack = {
       schema: 'valuation-manual-intake-v1',
-      context: { company, issuerId, valuationDate, mode },
+      context: { company, issuerId, valuationDate, mode, autoDate },
       createdAt: new Date().toISOString(),
       status: intakeClear ? 'intake-reviewed' : 'intake-draft',
       readyForModelExecution: false,
@@ -772,7 +793,12 @@ export function ValuationDataIntake() {
       )
       setCompany(restored.context.company)
       setIssuerId(restored.context.issuerId)
-      setValuationDate(restored.context.valuationDate)
+      setAutoDate(restored.context.autoDate !== false)
+      setValuationDate(
+        restored.context.autoDate === false
+          ? restored.context.valuationDate
+          : localToday()
+      )
       setMode(restored.context.mode)
       setSelectedId(restored.files[0]?.id || '')
       setSheetName('')
@@ -796,17 +822,17 @@ export function ValuationDataIntake() {
     /^[A-Z]{3}$/.test(file.currency)
   )?.currency
   const modelKey = valuationModelKey(
-    { company, issuerId, valuationDate, mode },
+    { company, issuerId, valuationDate, mode, autoDate },
     records
   )
   const restoredModelSettings = React.useMemo(
     () =>
       settingsFromModelDraft(
         modelDraft,
-        { company, issuerId, valuationDate, mode },
+        { company, issuerId, valuationDate, mode, autoDate },
         records
       ),
-    [modelDraft, company, issuerId, valuationDate, mode, records]
+    [modelDraft, company, issuerId, valuationDate, mode, autoDate, records]
   )
   const rememberModelSettings = React.useCallback(
     (settings: RunSettings) => {
@@ -842,14 +868,25 @@ export function ValuationDataIntake() {
             placeholder='Ticker, exchange and share class'
           />
         </label>
-        <label>
-          Valuation date
-          <input
-            type='date'
-            value={valuationDate}
-            onChange={(event) => setValuationDate(event.target.value)}
-          />
-        </label>
+        <div>
+          <label>
+            Valuation date
+            <input
+              type='date'
+              value={valuationDate}
+              disabled={autoDate}
+              onChange={(event) => setValuationDate(event.target.value)}
+            />
+          </label>
+          <label className={styles.confirm}>
+            <input
+              type='checkbox'
+              checked={autoDate}
+              onChange={(event) => setAutoDate(event.target.checked)}
+            />
+            Today · updates automatically
+          </label>
+        </div>
         <label>
           Valuation method
           <select
@@ -1547,7 +1584,7 @@ export function ValuationDataIntake() {
           files={uploads}
           initialRunSettings={restoredModelSettings}
           onSettingsChange={rememberModelSettings}
-          context={{ company, issuerId, valuationDate, mode }}
+          context={{ company, issuerId, valuationDate, mode, autoDate }}
           onReview={() => setStage('review')}
         />
       </div>

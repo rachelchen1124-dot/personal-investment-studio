@@ -547,6 +547,7 @@ export function restoreIntake(raw: unknown): {
     issuerId: string
     valuationDate: string
     mode: 'dcf' | 'rv' | 'both'
+    autoDate?: boolean
   }
   files: Upload[]
   observations: Observation[]
@@ -680,6 +681,9 @@ export function restoreIntake(raw: unknown): {
       company: context.company,
       issuerId: context.issuerId,
       valuationDate: String(context.valuationDate),
+      ...(typeof context.autoDate === 'boolean'
+        ? { autoDate: context.autoDate }
+        : {}),
       mode:
         context.mode === 'dcf' || context.mode === 'rv' ? context.mode : 'both'
     }

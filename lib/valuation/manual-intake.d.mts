@@ -67,9 +67,15 @@ export interface NormalizedManual {
     note: string
   }
   derivation?: {
-    operation: 'divide'
-    inputSourceIds: [string, string]
+    operation: 'divide' | 'price-change' | 'reprice-multiple'
+    inputSourceIds: string[]
     note: string
+  }
+  marketReference?: boolean
+  marketRefresh?: {
+    quoteAsOf: string
+    baselineDate: string
+    estimateAsOf?: string
   }
   source: {
     id: string

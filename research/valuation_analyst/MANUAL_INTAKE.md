@@ -75,8 +75,10 @@ Drafts can be exported without inventing missing values.
 
 Uploads, raw source tables, mappings and model inputs autosave in IndexedDB in the
 same browser. Refreshing restores that draft and rebuilds normalized records from
-the original tables. Recovered inputs require fresh calculation confirmations;
-previous calculated results are not treated as current. An autosave failure is
+the original tables. Historical/manual recovered inputs require fresh calculation
+confirmations; automatic current-market valuations can retain their prior review
+when source inputs are unchanged and fetch fresh quotes before recalculating.
+Saved calculated values are never treated as fresh market data. An autosave failure is
 shown explicitly. Removing the final upload removes the stored draft. Downloaded
 intake backups can also retain model inputs, and remain the way to transfer work
 to another browser or device. Older backups without observations are rebuilt from
@@ -125,29 +127,44 @@ the app never combines target forward earnings with trailing peer earnings.
 Changing the period clears an adopted target multiple and deselects ineligible
 peers while preserving manually written comparability notes.
 
-### Valuations over time
+### Automatic daily market valuation
 
-The valuation date, market snapshot date, earnings period end and forecast vintage
-are separate dates. Relative valuation defaults to the latest uploaded market
-snapshot on or before the valuation date. A snapshot selector also supports
-deliberate historical comparisons. Every peer in a calculation uses the same
-market snapshot; partial newer uploads never fill missing peers from older dates.
-Future uploads and earnings vintages are excluded from earlier as-of valuations.
+The browser defaults to **Today · updates automatically** and **Automatic
+market-price updates**. The valuation date advances at local midnight and when
+returning to the page. Target and peer prices are fetched on opening, every five
+minutes while visible, and on return; Refresh market prices also requests an update.
+Only US stock identifiers and the oldest needed market-base date are sent to the
+quote endpoint. Uploaded financial amounts and spreadsheets stay in the browser.
 
-An older market snapshot can support a later valuation only after explicit review.
-Its date and age appear beside the peer checks, in results and in CSV/Excel exports.
-Changing the valuation date does not refresh uploaded prices, ratios or forecasts.
-An NTM horizon stays at its source period end; new Peer Data uploads advance the
-snapshot, multiple values and corresponding NTM period in Latest available mode.
-Target NTM EBITDA remains linked to the target's own TEV and ratio at that snapshot,
-or to compatible uploaded target earnings. No earnings roll-forward is invented.
+The quote service uses Yahoo Finance's public chart feed with the actual regular
+market timestamp, security identity, exchange and currency. Quotes may be delayed.
+It retains the last genuine trading date over weekends/holidays, bounds request
+size and concurrency, and rejects missing, stale, future or invalid prices. Failed
+quotes stay unavailable; uploaded prices are never silently presented as current.
 
-Date changes and updated uploads invalidate calculated results and review checks.
-Analyst forecast assumptions, capital overrides and peer rationales are retained;
-unchanged source-derived defaults refresh from the newly eligible inputs. Data
-revisions on different source dates are kept as separate vintages; conflicting
-values within one vintage still require reconciliation. DCF retains company fiscal
-years when the valuation date changes.
+EV at the latest share price = uploaded EV + uploaded basic shares × (latest
+price − uploaded price). Shares and EV-to-equity adjustments are held at the upload
+base. A forward multiple is then current EV divided by the uploaded EBITDA estimate,
+including an estimate implied by that issuer's uploaded TEV / forward ratio. The
+source forecast period and estimate vintage remain explicit; a price refresh does
+not manufacture a new rolling NTM consensus. Same-vintage duplicates, share-scale
+reconciliation, currency differences and intervening splits are checked before use.
+Current prices, price-updated EV/multiples, original uploaded inputs and all formulas
+remain linked in CSV/Excel exports.
+
+**Period / checks** separates the current valuation date, actual market date, quote
+timestamp, earnings-period end and forecast vintage. The default current-market
+mode replaces the old uploaded-snapshot selector. After review, automatic
+recalculation updates the valuation as quotes change. Saved automatic valuations
+retain reviewed assumptions and peer rationales when the underlying inputs remain
+unchanged; refreshed or changed financial inputs require review again. DCF continues
+to use company fiscal years.
+
+**Uploaded snapshot / historical valuation** remains available for historical
+comparisons. It selects one uploaded market cohort on or before the requested date,
+requires explicit acceptance of older data, excludes future information, and retains
+its actual forecast horizon. Partial snapshots never fill missing peers from other
+market dates.
 
 Peer quartiles are benchmarks. An optional analyst-selected target multiple
 requires a sourced growth/returns rationale. Annual estimate changes are shown

@@ -7,12 +7,15 @@ import {
   type Upload,
   validDate
 } from '@/lib/valuation/manual-intake.mjs'
+import { localToday } from '@/lib/valuation/market-prices'
 import {
   applyPeerResearch,
   peerResearchIds,
   type PublicCompanyProfile,
   publicProfileSource
 } from '@/lib/valuation/peer-research'
+import { applyMarketPrices } from '@/lib/valuation/price-refresh'
+import { useMarketPrices } from '@/lib/valuation/use-market-prices'
 import {
   executeDcf,
   executeRelative,
@@ -24,7 +27,8 @@ import {
   prepareModel,
   relativePeriodLabel,
   restoreRunSettings,
-  type RunSettings
+  type RunSettings,
+  sameIssuer
 } from '@/lib/valuation/workflow'
 import styles from '@/styles/ValuationIntake.module.css'
 
@@ -104,12 +108,62 @@ export function ValuationModelRunner({
     () => prepareModel(rawRecords, context),
     [rawRecords, context]
   )
-  const [settings, setSettings] = React.useState<RunSettings>(() =>
-    restoreRunSettings(baseModel, initialRunSettings)
-  )
-  const model = React.useMemo(
+  const [settings, setSettings] = React.useState<RunSettings>(() => ({
+    ...restoreRunSettings(baseModel, initialRunSettings),
+    marketDataMode: initialRunSettings?.marketDataMode || 'current',
+    autoRecalculate: initialRunSettings?.autoRecalculate ?? true
+  }))
+  const currentMarket =
+    settings.marketDataMode === 'current' &&
+    context.valuationDate === localToday()
+  const sourceModel = React.useMemo(
     () => prepareModel(rawRecords, context, settings.forwardMultiplePeriods),
     [rawRecords, context, settings.forwardMultiplePeriods]
+  )
+  const marketPrices = useMarketPrices(
+    context.mode === 'dcf'
+      ? sourceModel.records.filter((record) =>
+          sameIssuer(record.issuerId, context.issuerId)
+        )
+      : sourceModel.records,
+    context.issuerId,
+    context.valuationDate,
+    currentMarket
+  )
+  const priceUpdate = React.useMemo(
+    () => applyMarketPrices(sourceModel.records, marketPrices.batch, context),
+    [sourceModel.records, marketPrices.batch, context]
+  )
+  const model = React.useMemo(
+    () =>
+      currentMarket
+        ? prepareModel(
+            priceUpdate.records,
+            context,
+            settings.forwardMultiplePeriods
+          )
+        : sourceModel,
+    [
+      currentMarket,
+      priceUpdate.records,
+      context,
+      settings.forwardMultiplePeriods,
+      sourceModel
+    ]
+  )
+  const effectiveSettings = React.useMemo(
+    () =>
+      currentMarket
+        ? {
+            ...settings,
+            relativeSnapshot: 'latest',
+            price:
+              model.capital.price?.value == null
+                ? ''
+                : String(model.capital.price.value)
+          }
+        : { ...settings, marketDataMode: 'uploaded' as const },
+    [currentMarket, settings, model.capital.price]
   )
   const records = model.records
   React.useEffect(() => {
@@ -141,7 +195,12 @@ export function ValuationModelRunner({
   const feedbackRef = React.useRef<HTMLParagraphElement>(null)
   const dcfResultsRef = React.useRef<HTMLElement>(null)
   const rvResultsRef = React.useRef<HTMLElement>(null)
-  const signature = JSON.stringify(settings)
+  const autoDcf = React.useRef(false)
+  const signature = JSON.stringify([
+    context.valuationDate,
+    effectiveSettings,
+    currentMarket ? marketPrices.batch?.retrievedAt : ''
+  ])
   const currentFeedback = feedback?.signature === signature ? feedback : null
   const dcfRun = dcf?.signature === signature ? dcf.run : null
   const rvRun = relative?.signature === signature ? relative.run : null
@@ -151,13 +210,13 @@ export function ValuationModelRunner({
         model,
         settings.multiple,
         settings.relativePeriod,
-        settings.relativeSnapshot
+        effectiveSettings.relativeSnapshot
       ),
     [
       model,
       settings.multiple,
       settings.relativePeriod,
-      settings.relativeSnapshot
+      effectiveSettings.relativeSnapshot
     ]
   )
   const uploadedMultiples = model.relativeInputs.filter(
@@ -169,6 +228,10 @@ export function ValuationModelRunner({
       record.value > 0 &&
       preview.peers.some((peer) => peer.issuerId === record.issuerId)
   )
+  const previewPeriodLabel =
+    currentMarket && preview.basis === 'NTM'
+      ? `Forward EBITDA · uploaded NTM window to ${preview.target?.period.endDate || preview.periodKey.split(':')[1]}`
+      : preview.periodLabel
   const unresolvedMultipleFiles = (files || [])
     .map((file) => ({
       file,
@@ -216,6 +279,74 @@ export function ValuationModelRunner({
     setSettings((current) => ({ ...current, [key]: value }))
     setFeedback(null)
   }
+  const [autoMessage, setAutoMessage] = React.useState('')
+  React.useEffect(() => {
+    if (
+      !autoDcf.current ||
+      !currentMarket ||
+      !settings.dcfReview ||
+      !settings.sourceReview ||
+      !settings.capitalReview ||
+      marketPrices.loading
+    )
+      return
+    try {
+      setDcf({
+        signature,
+        run: executeDcf(records, context, effectiveSettings)
+      })
+    } catch {
+      setDcf(null)
+    }
+  }, [
+    signature,
+    currentMarket,
+    settings.dcfReview,
+    settings.sourceReview,
+    settings.capitalReview,
+    marketPrices.loading,
+    records,
+    context,
+    effectiveSettings
+  ])
+  React.useEffect(() => {
+    if (
+      !currentMarket ||
+      !settings.autoRecalculate ||
+      !settings.sourceReview ||
+      !settings.capitalReview ||
+      !settings.peerProfileReview ||
+      marketPrices.loading
+    )
+      return
+    try {
+      setRelative({
+        signature,
+        run: executeRelative(records, context, effectiveSettings)
+      })
+      setAutoMessage(
+        'Reviewed valuation updates automatically with market prices.'
+      )
+    } catch (err) {
+      setRelative(null)
+      setAutoMessage(
+        err instanceof Error
+          ? err.message
+          : 'Complete the reviewed inputs to enable automatic valuation.'
+      )
+    }
+  }, [
+    signature,
+    currentMarket,
+    settings.autoRecalculate,
+    settings.sourceReview,
+    settings.capitalReview,
+    settings.peerProfileReview,
+    marketPrices.loading,
+    records,
+    context,
+    effectiveSettings
+  ])
   const chooseRelativePeriod = (multiple: Multiple, period?: string) => {
     const next = peerPreview(model, multiple, period, settings.relativeSnapshot)
     setSettings((current) => ({
@@ -277,7 +408,8 @@ export function ValuationModelRunner({
         type='number'
         step='any'
         required={key !== 'price'}
-        value={settings[key]}
+        value={key === 'price' ? effectiveSettings.price : settings[key]}
+        readOnly={key === 'price' && currentMarket}
         onChange={(event) => set(key, event.target.value)}
       />
       {note ? <small className={styles.inputHint}>{note}</small> : null}
@@ -447,12 +579,16 @@ export function ValuationModelRunner({
   }
   function run(method: Method) {
     try {
-      if (method === 'dcf')
-        setDcf({ signature, run: executeDcf(records, context, settings) })
-      else
+      if (method === 'dcf') {
+        autoDcf.current = true
+        setDcf({
+          signature,
+          run: executeDcf(records, context, effectiveSettings)
+        })
+      } else
         setRelative({
           signature,
-          run: executeRelative(records, context, settings)
+          run: executeRelative(records, context, effectiveSettings)
         })
       setFeedback({
         method,
@@ -494,7 +630,7 @@ export function ValuationModelRunner({
         'Timing',
         dcfRun
           ? 'Company fiscal years; fiscal year-end discounting; current-year FCFF prorated by remaining days'
-          : `Relative valuation: ${preview.periodLabel}`
+          : `Relative valuation: ${previewPeriodLabel}`
       ],
       [
         'Capital bridge',
@@ -620,6 +756,12 @@ export function ValuationModelRunner({
     }
     if (rvRun) {
       rows.push(
+        [
+          'Market price refresh',
+          rvRun.result.marketDataMode,
+          rvRun.result.marketUpdatedAt || 'Uploaded market inputs',
+          'Shares, net debt and earnings retain their uploaded source vintage.'
+        ],
         [
           'Relative valuation dates',
           'Valuation as of',
@@ -753,7 +895,7 @@ export function ValuationModelRunner({
       const model = buildValuationWorkbook({
         records,
         context,
-        settings,
+        settings: effectiveSettings,
         dcf: dcfRun,
         relative: rvRun,
         files
@@ -868,6 +1010,20 @@ export function ValuationModelRunner({
       </label>
 
       <h3 className={styles.modelHeading}>1. Equity bridge and shares</h3>
+      <label>
+        Market inputs
+        <select
+          value={settings.marketDataMode || 'current'}
+          onChange={(event) => {
+            set('marketDataMode', event.target.value as 'current' | 'uploaded')
+          }}
+        >
+          <option value='current'>Automatic market-price updates</option>
+          <option value='uploaded'>
+            Uploaded snapshot / historical valuation
+          </option>
+        </select>
+      </label>
       <p className={styles.caption}>
         Reported debt, cash and book NCI are proposed where available. Review
         leases, nonoperating investments, restricted cash and the market value
@@ -913,12 +1069,14 @@ export function ValuationModelRunner({
         {input(
           'price',
           'Reference share price (optional)',
-          model.capital.price &&
-            Number(settings.price) === model.capital.price.value
-            ? 'Source snapshot: ' + model.capital.price.source.asOf
-            : settings.price.trim()
-              ? 'Analyst-entered reference price for ' + context.valuationDate
-              : 'Optional; leave empty to omit upside.'
+          currentMarket
+            ? `Automatically refreshed · ${model.capital.price?.marketRefresh?.quoteAsOf || 'waiting for current quote'}`
+            : model.capital.price &&
+                Number(settings.price) === model.capital.price.value
+              ? 'Source snapshot: ' + model.capital.price.source.asOf
+              : settings.price.trim()
+                ? 'Analyst-entered reference price for ' + context.valuationDate
+                : 'Optional; leave empty to omit upside.'
         )}
       </div>
       <button
@@ -1127,63 +1285,133 @@ export function ValuationModelRunner({
           <h3 className={styles.modelHeading}>
             3. Relative valuation · as of {context.valuationDate}
           </h3>
-          <section
-            className={styles.status}
-            aria-label='Relative valuation dates'
-          >
-            <strong>Valuation as of {context.valuationDate}</strong>
-            <label>
-              Market data snapshot
-              <select
-                value={settings.relativeSnapshot || 'latest'}
-                onChange={(event) => chooseSnapshot(event.target.value)}
-              >
-                <option value='latest'>
-                  Latest available
-                  {preview.snapshot.dates[0]
-                    ? ` · ${preview.snapshot.dates[0]}`
-                    : ' · upload Peer Data'}
-                </option>
-                {preview.snapshot.dates.map((date) => (
-                  <option key={date} value={date}>
-                    {date}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {preview.snapshot.error ? (
-              <p role='alert'>{preview.snapshot.error}</p>
-            ) : (
-              <p>
-                Market data as of <strong>{preview.snapshot.date}</strong> ·{' '}
-                {preview.snapshot.ageDays === 0
-                  ? 'same-day snapshot'
-                  : `${preview.snapshot.ageDays} days before valuation`}
-                . All peer multiples use this snapshot.
-              </p>
-            )}
-            <p>
-              New uploads are selected automatically in “Latest available” mode.
-              Changing the valuation date does not refresh uploaded prices or
-              estimates. Upload refreshed Peer Data for a newer market snapshot;
-              NTM earnings dates remain those of the source.
+          {settings.marketDataMode === 'current' && !currentMarket ? (
+            <p className={styles.notice}>
+              Automatic market prices follow today’s date. This historical
+              valuation uses uploaded snapshots. Enable “Today · updates
+              automatically” for current prices.
             </p>
-            {preview.snapshot.ageDays ? (
+          ) : null}
+          {currentMarket ? (
+            <section
+              className={styles.status}
+              aria-label='Automatic market updates'
+            >
+              <strong>
+                Current market valuation · {context.valuationDate}
+              </strong>
+              <p role='status'>
+                {marketPrices.loading
+                  ? 'Refreshing target and peer market prices…'
+                  : marketPrices.batch?.quotes.length
+                    ? `Latest prices: ${marketPrices.batch.quotes.length} securities · checked ${marketPrices.batch.retrievedAt}.`
+                    : 'Waiting for current market prices.'}
+              </p>
+              {marketPrices.error ? (
+                <p role='alert'>{marketPrices.error}</p>
+              ) : null}
+              <p>
+                Prices refresh on opening this page, every five minutes while
+                visible, and when you return. The valuation date advances daily.
+                Latest available quotes may be delayed; each peer shows its
+                actual quote timestamp.
+              </p>
+              <p>
+                EV and multiples update with share prices. Uploaded shares, net
+                debt and EBITDA estimates remain the financial assumptions;
+                their source vintages are shown separately.
+              </p>
+              {model.capital.price?.marketRefresh ? (
+                <p>
+                  <strong>
+                    {context.issuerId} price: {model.capital.price.currency}{' '}
+                    {format(model.capital.price.value)}
+                  </strong>{' '}
+                  · quote {model.capital.price.marketRefresh.quoteAsOf}
+                </p>
+              ) : null}
+              <button
+                type='button'
+                className={styles.secondary}
+                disabled={marketPrices.loading}
+                onClick={() => void marketPrices.refresh()}
+              >
+                {marketPrices.loading
+                  ? 'Refreshing prices…'
+                  : 'Refresh market prices'}
+              </button>
               <label className={styles.confirm}>
                 <input
                   type='checkbox'
-                  checked={Boolean(settings.priorSnapshotReview)}
+                  checked={Boolean(settings.autoRecalculate)}
                   onChange={(event) =>
-                    set('priorSnapshotReview', event.target.checked)
+                    set('autoRecalculate', event.target.checked)
                   }
                 />
-                I accept using the {preview.snapshot.date} market snapshot for
-                the {context.valuationDate} valuation (
-                {preview.snapshot.ageDays} days old). These are uploaded values,
-                not live market data.
+                Automatically recalculate this valuation after the inputs and
+                peers are reviewed.
               </label>
-            ) : null}
-          </section>
+              {autoMessage ? <p>{autoMessage}</p> : null}
+            </section>
+          ) : (
+            <section
+              className={styles.status}
+              aria-label='Relative valuation dates'
+            >
+              <strong>Valuation as of {context.valuationDate}</strong>
+              <label>
+                Market data snapshot
+                <select
+                  value={settings.relativeSnapshot || 'latest'}
+                  onChange={(event) => chooseSnapshot(event.target.value)}
+                >
+                  <option value='latest'>
+                    Latest available
+                    {preview.snapshot.dates[0]
+                      ? ` · ${preview.snapshot.dates[0]}`
+                      : ' · upload Peer Data'}
+                  </option>
+                  {preview.snapshot.dates.map((date) => (
+                    <option key={date} value={date}>
+                      {date}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {preview.snapshot.error ? (
+                <p role='alert'>{preview.snapshot.error}</p>
+              ) : (
+                <p>
+                  Market data as of <strong>{preview.snapshot.date}</strong> ·{' '}
+                  {preview.snapshot.ageDays === 0
+                    ? 'same-day snapshot'
+                    : `${preview.snapshot.ageDays} days before valuation`}
+                  . All peer multiples use this snapshot.
+                </p>
+              )}
+              <p>
+                New uploads are selected automatically in “Latest available”
+                mode. Changing the valuation date does not refresh uploaded
+                prices or estimates. Upload refreshed Peer Data for a newer
+                market snapshot; NTM earnings dates remain those of the source.
+              </p>
+              {preview.snapshot.ageDays ? (
+                <label className={styles.confirm}>
+                  <input
+                    type='checkbox'
+                    checked={Boolean(settings.priorSnapshotReview)}
+                    onChange={(event) =>
+                      set('priorSnapshotReview', event.target.checked)
+                    }
+                  />
+                  I accept using the {preview.snapshot.date} market snapshot for
+                  the {context.valuationDate} valuation (
+                  {preview.snapshot.ageDays} days old). These are uploaded
+                  values, not live market data.
+                </label>
+              ) : null}
+            </section>
+          )}
           <p>
             Choose at least three comparable issuers and document why they
             belong in the peer set. The target is excluded automatically.
@@ -1218,7 +1446,10 @@ export function ValuationModelRunner({
               ) : null}
               {preview.periodChoices.map((period) => (
                 <option key={period.key} value={period.key}>
-                  {period.label} · {period.eligiblePeers} ready peers
+                  {currentMarket && period.basis === 'NTM'
+                    ? `Forward EBITDA · uploaded NTM window to ${period.endDate}`
+                    : period.label}{' '}
+                  · {period.eligiblePeers} ready peers
                   {period.basis !== 'LTM' &&
                   period.uploadedPeers &&
                   !period.eligiblePeers
@@ -1234,21 +1465,25 @@ export function ValuationModelRunner({
               aria-label='Uploaded forward EBITDA multiples'
             >
               <strong>
-                {uploadedMultipleValues.length} peer SP_TEV_EBITDA_FWD multiples
-                for {preview.periodLabel} · median {format(uploadedMedian)}×
+                {uploadedMultipleValues.length}{' '}
+                {currentMarket
+                  ? 'price-updated forward EV/EBITDA'
+                  : 'peer SP_TEV_EBITDA_FWD'}{' '}
+                multiples for {previewPeriodLabel} · median{' '}
+                {format(uploadedMedian)}×
               </strong>
               <p>
-                The uploaded ratios are the peer TEV/EBITDA inputs. Peer TEV and
-                EBITDA amounts are not required for these rows.{' '}
+                {currentMarket
+                  ? 'Current EV uses the latest price and uploaded shares and EV-to-equity adjustments. Forward multiples use the uploaded EBITDA estimate; its financial period stays unchanged until estimates are refreshed.'
+                  : 'The uploaded ratios are the peer TEV/EBITDA inputs. Peer TEV and EBITDA amounts are not required for these rows. NTM covers the next twelve months from the upload snapshot date.'}{' '}
                 {uploadedMultiples.length} source observations found; each
-                issuer counts once in the selected-period median. NTM covers the
-                next twelve months from the snapshot date.
+                issuer counts once in the selected-period median.
               </p>
               {unresolvedMultipleFiles.length ? (
                 <>
                   <p>
                     The export did not provide complete forecast-period labels.
-                    Confirm the column covers the selected {preview.periodLabel}{' '}
+                    Confirm the column covers the selected {previewPeriodLabel}{' '}
                     before applying it to the target EBITDA. Choose a different
                     earnings period above if needed.
                   </p>
@@ -1296,7 +1531,7 @@ export function ValuationModelRunner({
                           setFeedback(null)
                         }}
                       >
-                        Confirm {preview.periodLabel} for uploaded multiples in{' '}
+                        Confirm {previewPeriodLabel} for uploaded multiples in{' '}
                         {file.name}
                       </button>
                     </div>
@@ -1313,14 +1548,14 @@ export function ValuationModelRunner({
           ) : null}
           <p className={styles.caption}>
             {context.issuerId} {fields[preview.field] || preview.field}:{' '}
-            {format(preview.target?.value)} · {preview.periodLabel}.
+            {format(preview.target?.value)} · {previewPeriodLabel}.
             {settings.multiple === 'P/E'
               ? ' Confirm common-equity attribution for SP_NET_INC before calculating P/E.'
               : ''}
           </p>
           {preview.target?.derivation ? (
             <p className={styles.caption}>
-              {context.issuerId} NTM TEV/EBITDA:{' '}
+              Uploaded basis · {context.issuerId} NTM TEV/EBITDA:{' '}
               {format(
                 records.find(
                   (record) =>
@@ -1328,9 +1563,9 @@ export function ValuationModelRunner({
                     preview.target?.derivation?.inputSourceIds[1]
                 )?.value
               )}
-              × from the uploaded target row. Target NTM EBITDA is implied by
-              that row’s TEV divided by its NTM multiple; both source cells are
-              linked in the exports.
+              × from the uploaded target row ({preview.target.source.asOf}).
+              Target NTM EBITDA is implied by that row’s TEV divided by its NTM
+              multiple; both source cells are linked in the exports.
             </p>
           ) : null}
           {preview.targetGrowth ? (
@@ -1350,7 +1585,7 @@ export function ValuationModelRunner({
               }
             >
               {preview.peers.filter((peer) => !peer.reason).length} of{' '}
-              {preview.peers.length} peers have aligned {preview.periodLabel}{' '}
+              {preview.peers.length} peers have aligned {previewPeriodLabel}{' '}
               inputs.{' '}
               {uploadedMultiples.length
                 ? 'Uploaded forward multiples are used directly; complete any period confirmation above and review flagged rows below.'
@@ -1441,7 +1676,7 @@ export function ValuationModelRunner({
               <caption className={styles.caption}>
                 Peer {settings.multiple} multiples · valuation as of{' '}
                 {context.valuationDate} · market snapshot{' '}
-                {preview.snapshot.date || 'missing'} · {preview.periodLabel}.
+                {preview.snapshot.date || 'missing'} · {previewPeriodLabel}.
                 Flagged selections need their valuation checks resolved before
                 calculation.
               </caption>
@@ -1488,8 +1723,30 @@ export function ValuationModelRunner({
                       <td>
                         {peer.suppliedMultiple ? (
                           <span>
-                            Uploaded forward multiple
-                            <small>SP_TEV_EBITDA_FWD</small>
+                            {peer.suppliedMultiple.marketRefresh
+                              ? 'Price-updated forward multiple'
+                              : 'Uploaded forward multiple'}
+                            <small>
+                              {peer.suppliedMultiple.marketRefresh
+                                ? 'EV updated from current price'
+                                : 'SP_TEV_EBITDA_FWD'}
+                            </small>
+                            {peer.suppliedMultiple.marketRefresh ? (
+                              <small>
+                                Price{' '}
+                                {
+                                  priceUpdate.quotes.find((quote) =>
+                                    sameIssuer(quote.issuerId, peer.issuerId)
+                                  )?.currency
+                                }{' '}
+                                {format(
+                                  priceUpdate.quotes.find((quote) =>
+                                    sameIssuer(quote.issuerId, peer.issuerId)
+                                  )?.price
+                                )}{' '}
+                                · EV {format(peer.numerator?.value)}m
+                              </small>
+                            ) : null}
                           </span>
                         ) : (
                           <>
@@ -1524,21 +1781,39 @@ export function ValuationModelRunner({
                             ? ` · ${preview.snapshot.ageDays} days old`
                             : ''}
                         </small>
+                        {currentMarket ? (
+                          <small>
+                            Quote:{' '}
+                            {(peer.suppliedMultiple || peer.numerator)
+                              ?.marketRefresh?.quoteAsOf ||
+                              priceUpdate.quotes.find((quote) =>
+                                sameIssuer(quote.issuerId, peer.issuerId)
+                              )?.asOf ||
+                              'Unavailable'}
+                          </small>
+                        ) : null}
+                        {currentMarket && priceUpdate.errors[peer.issuerId] ? (
+                          <small>{priceUpdate.errors[peer.issuerId]}</small>
+                        ) : null}
                         <small>Earnings end:</small>
                         {(peer.suppliedMultiple || peer.metric)?.period
                           .endDate || 'Missing'}
                         <small>
                           Forecast / reported vintage:{' '}
-                          {(peer.suppliedMultiple || peer.metric)?.source
-                            .asOf || 'Missing'}
+                          {peer.suppliedMultiple?.marketRefresh?.estimateAsOf ||
+                            (peer.suppliedMultiple || peer.metric)?.source
+                              .asOf ||
+                            'Missing'}
                         </small>
                         {peer.suppliedMultiple?.forwardPeriodConfirmation ? (
                           <small>
-                            {peer.suppliedMultiple.forwardPeriodConfirmation.note.startsWith(
-                              'User confirmed'
-                            )
-                              ? 'Period confirmed by user'
-                              : 'NTM horizon from snapshot'}
+                            {peer.suppliedMultiple.marketRefresh
+                              ? 'Uploaded forecast horizon; market price refreshed'
+                              : peer.suppliedMultiple.forwardPeriodConfirmation.note.startsWith(
+                                    'User confirmed'
+                                  )
+                                ? 'Period confirmed by user'
+                                : 'NTM horizon from snapshot'}
                           </small>
                         ) : null}
                         <small>
@@ -1876,7 +2151,9 @@ export function ValuationModelRunner({
             <button
               type='button'
               className={styles.primary}
-              disabled={!records.length}
+              disabled={
+                !records.length || (currentMarket && marketPrices.loading)
+              }
               aria-describedby={
                 currentFeedback?.method === 'rv'
                   ? 'rv-calculation-feedback'
@@ -2055,19 +2332,24 @@ export function ValuationModelRunner({
               <h4 id='rv-result-title'>
                 Relative valuation results · as of {context.valuationDate} ·{' '}
                 {rvRun.result.multiple} ·{' '}
-                {relativePeriodLabel(rvRun.result.period)}
+                {rvRun.result.marketDataMode === 'current-prices' &&
+                rvRun.result.period.basis === 'NTM'
+                  ? `Forward EBITDA · uploaded NTM window to ${rvRun.result.period.endDate}`
+                  : relativePeriodLabel(rvRun.result.period)}
               </h4>
               <p
                 className={
                   rvRun.result.snapshotAgeDays ? styles.notice : styles.caption
                 }
               >
-                Market snapshot: {rvRun.result.marketSnapshotDate}
+                Market prices as of: {rvRun.result.marketSnapshotDate}
                 {rvRun.result.snapshotAgeDays
-                  ? ` · ${rvRun.result.snapshotAgeDays} days before valuation · older data accepted`
+                  ? ` · ${rvRun.result.snapshotAgeDays} days before valuation${rvRun.result.marketDataMode === 'current-prices' ? ' · latest available trading quote' : ' · older data accepted'}`
                   : ' · same-day data'}
-                . Earnings period end: {rvRun.result.period.endDate}. Uploaded
-                values have not been rolled forward.
+                . Earnings period end: {rvRun.result.period.endDate}.{' '}
+                {rvRun.result.marketDataMode === 'current-prices'
+                  ? 'Market prices and EV multiples refresh automatically; uploaded financial estimates retain their source period and vintage.'
+                  : 'Uploaded values have not been rolled forward.'}
               </p>
               {rvRun.result.selectedTarget ? (
                 <div className={styles.status}>
@@ -2107,8 +2389,11 @@ export function ValuationModelRunner({
               <p>
                 {rvRun.result.included.length} independent peers included.
                 Target metric {format(rvRun.result.targetMetric)},{' '}
-                {relativePeriodLabel(rvRun.result.period)}. Percentiles describe
-                this selected peer set.
+                {rvRun.result.marketDataMode === 'current-prices' &&
+                rvRun.result.period.basis === 'NTM'
+                  ? `Forward EBITDA · uploaded NTM window to ${rvRun.result.period.endDate}`
+                  : relativePeriodLabel(rvRun.result.period)}
+                . Percentiles describe this selected peer set.
               </p>
               {rvRun.result.excluded.length ? (
                 <ul>

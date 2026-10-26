@@ -21,6 +21,7 @@ export type IntakeContext = {
   issuerId: string
   valuationDate: string
   mode: 'dcf' | 'rv' | 'both'
+  autoDate?: boolean
 }
 export type AnnualMetric = {
   value: number
@@ -64,6 +65,8 @@ export type RunSettings = {
   relativePeriod: string
   relativeSnapshot: string
   priorSnapshotReview: boolean
+  marketDataMode?: 'current' | 'uploaded'
+  autoRecalculate?: boolean
   targetMultiple: string
   targetMultipleRationale: string
   peerSelections: Record<string, PeerSelection>
@@ -139,6 +142,7 @@ function withUploadedTargetNtmEbitda(
   const multiples = targetRecords.filter(
     (record) =>
       record.field === 'evEbitdaForward' &&
+      !record.marketReference &&
       record.classification === 'consensus' &&
       record.period.basis === 'NTM' &&
       record.period.months === 12 &&
@@ -611,6 +615,8 @@ export function prepareModel(
       target.filter(
         (record) =>
           record.field === field &&
+          (!record.marketReference ||
+            ['basicShares', 'pointInTimeDilutedShares'].includes(field)) &&
           record.period.basis === 'instant' &&
           available(record, context.valuationDate) &&
           (['price', 'basicShares', 'pointInTimeDilutedShares'].includes(
@@ -643,8 +649,10 @@ export function prepareModel(
         }
       : undefined
   const workingCapital = instant('operatingWorkingCapital')
-  const relativeInputs = records.filter((record) =>
-    ['peers', 'forward'].includes(record.source.section)
+  const relativeInputs = records.filter(
+    (record) =>
+      ['peers', 'forward'].includes(record.source.section) &&
+      !record.marketReference
   )
   const qualifiedIds = [
     ...new Set(
@@ -729,7 +737,19 @@ export function prepareModel(
     tradeWorkingCapital,
     workingCapital,
     peers: [
-      ...new Set([...peers, ...resolvedInputs.map((record) => record.issuerId)])
+      ...new Set([
+        ...peers,
+        ...resolvedInputs.map((record) => record.issuerId),
+        ...records
+          .filter((record) => record.marketReference)
+          .map((record) => {
+            const id = record.issuerId.toUpperCase()
+            const matches = qualifiedIds.filter((qualified) =>
+              sameIssuer(id, qualified)
+            )
+            return !id.includes(':') && matches.length === 1 ? matches[0]! : id
+          })
+      ])
     ]
       .filter((id) => !sameIssuer(id, context.issuerId))
       .toSorted(),
@@ -941,10 +961,32 @@ export function rebaseRunSettings(
     settings.relativeSnapshot
   )
   settings.relativePeriod = preview.periodKey
-  settings.sourceReview = false
-  settings.capitalReview = false
+  const footprint = (data: ReturnType<typeof prepareModel>) =>
+    JSON.stringify(
+      data.records
+        .filter((record) => available(record, data.context.valuationDate))
+        .map((record) => [
+          record.source.id,
+          record.value,
+          record.currency,
+          record.definition,
+          record.period.basis,
+          record.period.endDate,
+          record.issues.filter(
+            (issue) =>
+              !['REVIEW_REQUIRED', 'FUTURE_VINTAGE'].includes(issue.code)
+          )
+        ])
+    )
+  const continuous =
+    model.context.autoDate &&
+    saved.marketDataMode === 'current' &&
+    saved.autoRecalculate &&
+    footprint(previousModel) === footprint(model)
+  settings.sourceReview = Boolean(continuous && saved.sourceReview)
+  settings.capitalReview = Boolean(continuous && saved.capitalReview)
   settings.dcfReview = false
-  settings.peerProfileReview = false
+  settings.peerProfileReview = Boolean(continuous && saved.peerProfileReview)
   settings.priorSnapshotReview = false
   settings.peerSelections = Object.fromEntries(
     Object.entries(saved.peerSelections).map(([id, selection]) => [
@@ -952,7 +994,12 @@ export function rebaseRunSettings(
       {
         ...selection,
         ...(selection.research
-          ? { research: { ...selection.research, reviewed: false } }
+          ? {
+              research: {
+                ...selection.research,
+                reviewed: Boolean(continuous && selection.research.reviewed)
+              }
+            }
           : {})
       }
     ])
@@ -1257,6 +1304,9 @@ export function peerPreview(
     model.context.valuationDate,
     requestedSnapshot
   )
+  const estimateCutoff = model.records.some((record) => record.marketRefresh)
+    ? model.context.valuationDate
+    : snapshot.date
   const field = {
     'EV/Revenue': 'revenue',
     'EV/EBITDA': 'ebitda',
@@ -1266,7 +1316,7 @@ export function peerPreview(
   const metrics = model.relativeRecords.filter(
     (record) =>
       record.field === field &&
-      record.source.asOf <= snapshot.date &&
+      record.source.asOf <= estimateCutoff &&
       relativeMetric(record, model.context.valuationDate)
   )
   const targetMetrics = metrics.filter((record) =>
@@ -1353,7 +1403,7 @@ export function peerPreview(
               : null,
           growth: forecastGrowth(
             model.relativeRecords.filter(
-              (record) => record.source.asOf <= snapshot.date
+              (record) => record.source.asOf <= estimateCutoff
             ),
             metric
           )
@@ -1426,7 +1476,7 @@ export function peerPreview(
             : null,
         growth: forecastGrowth(
           model.relativeRecords.filter(
-            (record) => record.source.asOf <= snapshot.date
+            (record) => record.source.asOf <= estimateCutoff
           ),
           metric
         )
@@ -1534,7 +1584,7 @@ export function peerPreview(
     periodLabel: period?.label || 'No mapped earnings period',
     targetGrowth: forecastGrowth(
       model.relativeRecords.filter(
-        (record) => record.source.asOf <= snapshot.date
+        (record) => record.source.asOf <= estimateCutoff
       ),
       target
     ),
@@ -1559,9 +1609,20 @@ export function executeRelative(
     settings.relativePeriod,
     settings.relativeSnapshot
   )
+  const currentPrices = settings.marketDataMode === 'current'
+  if (currentPrices) {
+    requireValue(
+      model.capital.price?.marketRefresh,
+      'Current target price is unavailable. Refresh market prices before calculating.'
+    )
+    requireValue(
+      model.capital.price.currency === settings.currency,
+      'The current target price currency must match the valuation currency.'
+    )
+  }
   requireValue(!preview.snapshot.error, preview.snapshot.error)
   requireValue(
-    !preview.snapshot.ageDays || settings.priorSnapshotReview,
+    !preview.snapshot.ageDays || settings.priorSnapshotReview || currentPrices,
     `Market data is from ${preview.snapshot.date}, ${preview.snapshot.ageDays} days before valuation ${context.valuationDate}. Review and accept this older snapshot or upload refreshed Peer Data.`
   )
   requireValue(
@@ -1593,6 +1654,13 @@ export function executeRelative(
         ).filter(Boolean) as NormalizedManual[]
     )
   ]
+  if (currentPrices)
+    requireValue(
+      selected.every(
+        (peer) => (peer.suppliedMultiple || peer.numerator)?.marketRefresh
+      ),
+      'Every selected peer needs a refreshed market price; uploaded multiples were not substituted.'
+    )
   checkUsed(used, settings.currency)
   if (settings.multiple === 'P/E')
     requireValue(
@@ -1639,7 +1707,14 @@ export function executeRelative(
   const input = {
     context: base.context,
     marketSnapshotDate: preview.snapshot.date,
-    priorSnapshotAccepted: Boolean(settings.priorSnapshotReview),
+    priorSnapshotAccepted:
+      currentPrices || Boolean(settings.priorSnapshotReview),
+    marketDataMode: currentPrices
+      ? ('current-prices' as const)
+      : ('uploaded' as const),
+    marketUpdatedAt: currentPrices
+      ? model.capital.price!.source.retrievedAt
+      : undefined,
     sources: base.sources,
     capitalization: base.capitalization,
     multiple: settings.multiple,

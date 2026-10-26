@@ -244,19 +244,21 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   )
   for (const record of records) {
     if (!record.derivation) continue
-    const [numerator, denominator] = record.derivation.inputSourceIds.map(
-      (id) => recordsById.get(id)
+    const inputs = record.derivation.inputSourceIds.map((id) =>
+      recordsById.get(id)
     )
-    if (!numerator || !denominator)
-      throw new Error('Missing uploaded inputs for derived target NTM EBITDA.')
-    const a = sourceRef(numerator),
-      b = sourceRef(denominator)
-    sw.formula(
-      'E' + sourceRows.get(record),
-      `IF(AND(ISNUMBER(${a}),ISNUMBER(${b}),${a}>0,${b}>0),${a}/${b},"n.a.")`,
-      record.value,
-      'linked'
-    )
+    if (inputs.some((input) => !input))
+      throw new Error(
+        'Missing inputs for a linked market or earnings calculation.'
+      )
+    const [a, b, c, d] = inputs.map((input) => sourceRef(input!))
+    const expression =
+      record.derivation.operation === 'price-change'
+        ? `IF(AND(COUNT(${a},${b},${c},${d})=4,${b}>0,${c}>0,${d}>0),${a}+${b}*(${c}-${d}),"n.a.")`
+        : record.derivation.operation === 'reprice-multiple'
+          ? `IF(AND(COUNT(${a},${b},${c})=3,${b}>0,${c}>0),${a}*${c}/${b},"n.a.")`
+          : `IF(AND(ISNUMBER(${a}),ISNUMBER(${b}),${a}>0,${b}>0),${a}/${b},"n.a.")`
+    sw.formula('E' + sourceRows.get(record), expression, record.value, 'linked')
   }
   const consensusRefs = new Map<string, string>()
   const inputRef = (sourceId: string) => {
@@ -1108,7 +1110,9 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         'K' + row,
         serial(
           recordsById.get((used.providedMultiple || used.metric)!.sourceId)!
-            .source.asOf
+            .marketRefresh?.estimateAsOf ||
+            recordsById.get((used.providedMultiple || used.metric)!.sourceId)!
+              .source.asOf
         ),
         'date'
       )
@@ -1316,7 +1320,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     (input.scenarioNote ||
       'Exported from the current reviewed inputs. Edit blue input cells to recalculate the Excel model.') +
       (relative
-        ? ` Relative valuation market snapshot ${relative.result.marketSnapshotDate}; ${relative.result.snapshotAgeDays} days before valuation. Uploaded values and earnings horizons remain at their source dates.`
+        ? ` Relative valuation market snapshot ${relative.result.marketSnapshotDate}; ${relative.result.snapshotAgeDays} days before valuation. ${relative.result.marketDataMode === 'current-prices' ? `Prices refreshed ${relative.result.marketUpdatedAt}; EV and multiples revalue with prices. Shares, net debt and EBITDA remain uploaded assumptions.` : 'Uploaded values and earnings horizons remain at their source dates.'}`
         : ''),
     'note'
   )
