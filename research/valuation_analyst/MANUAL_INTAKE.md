@@ -125,6 +125,30 @@ the app never combines target forward earnings with trailing peer earnings.
 Changing the period clears an adopted target multiple and deselects ineligible
 peers while preserving manually written comparability notes.
 
+### Valuations over time
+
+The valuation date, market snapshot date, earnings period end and forecast vintage
+are separate dates. Relative valuation defaults to the latest uploaded market
+snapshot on or before the valuation date. A snapshot selector also supports
+deliberate historical comparisons. Every peer in a calculation uses the same
+market snapshot; partial newer uploads never fill missing peers from older dates.
+Future uploads and earnings vintages are excluded from earlier as-of valuations.
+
+An older market snapshot can support a later valuation only after explicit review.
+Its date and age appear beside the peer checks, in results and in CSV/Excel exports.
+Changing the valuation date does not refresh uploaded prices, ratios or forecasts.
+An NTM horizon stays at its source period end; new Peer Data uploads advance the
+snapshot, multiple values and corresponding NTM period in Latest available mode.
+Target NTM EBITDA remains linked to the target's own TEV and ratio at that snapshot,
+or to compatible uploaded target earnings. No earnings roll-forward is invented.
+
+Date changes and updated uploads invalidate calculated results and review checks.
+Analyst forecast assumptions, capital overrides and peer rationales are retained;
+unchanged source-derived defaults refresh from the newly eligible inputs. Data
+revisions on different source dates are kept as separate vintages; conflicting
+values within one vintage still require reconciliation. DCF retains company fiscal
+years when the valuation date changes.
+
 Peer quartiles are benchmarks. An optional analyst-selected target multiple
 requires a sourced growth/returns rationale. Annual estimate changes are shown
 when comparable adjacent forecast years exist; no ROIC or growth premium is

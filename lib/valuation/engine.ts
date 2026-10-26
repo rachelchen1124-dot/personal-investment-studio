@@ -95,6 +95,8 @@ export type Peer = {
 }
 
 export type RelativeValuationInput = ModelInputs & {
+  marketSnapshotDate?: string
+  priorSnapshotAccepted?: boolean
   // P/E needs shares and optional price; EV multiples additionally require the full bridge.
   capitalization: Partial<Capitalization> &
     Pick<Capitalization, 'dilutedShares'>
@@ -623,6 +625,20 @@ function percentile(sorted: number[], probability: number) {
 
 export function calculateRelativeValuation(input: RelativeValuationInput) {
   const read = validateModel(input)
+  const marketSnapshotDate =
+    input.marketSnapshotDate || input.context.valuationDate
+  validDate(marketSnapshotDate, 'marketSnapshotDate')
+  requireInput(
+    marketSnapshotDate <= input.context.valuationDate,
+    'Market snapshot cannot be after the valuation date'
+  )
+  const snapshotAgeDays =
+    (Date.parse(input.context.valuationDate) - Date.parse(marketSnapshotDate)) /
+    86_400_000
+  requireInput(
+    !snapshotAgeDays || input.priorSnapshotAccepted === true,
+    'Review and explicitly accept the older market snapshot before calculating'
+  )
   requireInput(
     ['EV/Revenue', 'EV/EBITDA', 'EV/EBIT', 'P/E'].includes(input.multiple),
     'Unsupported valuation multiple'
@@ -678,7 +694,7 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
         /^[A-Z]{3}$/.test(peer.currency) && peer.amountUnit === 'millions',
         `peer ${peer.ticker}: specify currency and amounts in millions for both numerator and denominator`
       )
-      if (peer.valuationDate !== input.context.valuationDate)
+      if (peer.valuationDate !== marketSnapshotDate)
         reason = 'Market valuation date does not match the target'
       else if (
         peer.period.basis !== input.period.basis ||
@@ -690,6 +706,15 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
         reason =
           'Metric definition or accounting adjustments differ from the target'
       else if (peer.providedMultiple) {
+        if (input.marketSnapshotDate) {
+          const source = input.sources.find(
+            (source) => source.id === peer.providedMultiple!.sourceId
+          )
+          requireInput(
+            source?.asOf === marketSnapshotDate,
+            `peer ${peer.ticker}: uploaded multiple source does not match the selected market snapshot`
+          )
+        }
         requireInput(
           input.multiple === 'EV/EBITDA' && peer.period.basis !== 'LTM',
           'Uploaded forward multiples are supported only for forward EV/EBITDA'
@@ -710,6 +735,17 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
             currency: peer.currency
           })
       } else {
+        if (input.marketSnapshotDate) {
+          const observation =
+            input.multiple === 'P/E' ? peer.equityValue : peer.enterpriseValue
+          const source = input.sources.find(
+            (source) => source.id === observation?.sourceId
+          )
+          requireInput(
+            source?.asOf === marketSnapshotDate,
+            `peer ${peer.ticker}: market value source does not match the selected market snapshot`
+          )
+        }
         const numerator = read(
           input.multiple === 'P/E' ? peer.equityValue : peer.enterpriseValue,
           `peer ${peer.ticker} ${input.multiple === 'P/E' ? 'equityValue' : 'enterpriseValue'}`
@@ -794,6 +830,8 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
   return {
     ...details,
     method: 'relative-valuation' as const,
+    marketSnapshotDate,
+    snapshotAgeDays,
     multiple: input.multiple,
     period: input.period,
     targetMetric,
@@ -805,6 +843,11 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
     equityBridge: capital,
     warnings: [
       ...details.warnings,
+      ...(snapshotAgeDays
+        ? [
+            `Valuation as of ${input.context.valuationDate} uses market data from ${marketSnapshotDate} (${snapshotAgeDays} days old), explicitly accepted by the user. Uploaded prices, multiples and NTM horizons have not been refreshed or rolled forward.`
+          ]
+        : []),
       'The 25th/50th/75th percentile outputs describe the supplied peer set; they are not forecast probabilities or confidence intervals.',
       'Peer selection, metric definitions, calendarization and any outlier exclusions require documented analyst judgment; no outliers are silently removed.',
       'The peer median is a benchmark, not an automatically justified target multiple. A selected target multiple needs a sourced growth and returns assessment.'

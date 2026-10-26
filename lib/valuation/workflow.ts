@@ -14,6 +14,7 @@ import {
 import { fiscalDate, fiscalDcfPeriods } from './fiscal-periods.ts'
 import { ntmPeriodEnd } from './forward-period.ts'
 import { type NormalizedManual, validDate } from './manual-intake.mjs'
+import { relativeSnapshot } from './relative-snapshot.ts'
 
 export type IntakeContext = {
   company: string
@@ -61,6 +62,8 @@ export type RunSettings = {
   peerProfileReview: boolean
   multiple: Multiple
   relativePeriod: string
+  relativeSnapshot: string
+  priorSnapshotReview: boolean
   targetMultiple: string
   targetMultipleRationale: string
   peerSelections: Record<string, PeerSelection>
@@ -143,9 +146,10 @@ function withUploadedTargetNtmEbitda(
       available(record, context.valuationDate)
   )
   const derived: NormalizedManual[] = []
-  for (const endDate of new Set(
-    multiples.map((record) => record.period.endDate)
+  for (const key of new Set(
+    multiples.map((record) => `${record.source.asOf}|${record.period.endDate}`)
   )) {
+    const [snapshotDate, endDate] = key.split('|') as [string, string]
     // Existing uploaded target earnings, including conflicting/flagged inputs,
     // must be reviewed on their own merits, never bypassed by an inferred value.
     if (
@@ -153,18 +157,22 @@ function withUploadedTargetNtmEbitda(
         (record) =>
           record.field === 'ebitda' &&
           record.period.basis === 'NTM' &&
-          record.period.endDate === endDate
+          record.period.endDate === endDate &&
+          record.source.asOf <= snapshotDate
       )
     )
       continue
     const multiple = one(
-      multiples.filter((record) => record.period.endDate === endDate)
+      multiples.filter(
+        (record) =>
+          record.period.endDate === endDate &&
+          record.source.asOf === snapshotDate
+      )
     )
     if (
       !multiple ||
       !multiple.value ||
       multiple.value <= 0 ||
-      multiple.source.asOf !== context.valuationDate ||
       multiple.issues.some((issue) => issue.code !== 'REVIEW_REQUIRED')
     )
       continue
@@ -173,7 +181,7 @@ function withUploadedTargetNtmEbitda(
         record.field === 'enterpriseValue' &&
         record.classification === 'market' &&
         record.period.basis === 'instant' &&
-        record.period.endDate === context.valuationDate &&
+        record.period.endDate === snapshotDate &&
         record.source.asOf === multiple.source.asOf &&
         record.source.provider === multiple.source.provider
     )
@@ -791,6 +799,8 @@ export function initialSettings(
     peerProfileReview: false,
     multiple: 'EV/EBITDA',
     relativePeriod: peerPreview(model, 'EV/EBITDA').periodKey,
+    relativeSnapshot: 'latest',
+    priorSnapshotReview: false,
     targetMultiple: '',
     targetMultipleRationale: '',
     peerSelections: {}
@@ -863,6 +873,91 @@ export function restoreRunSettings(
     settings.dcfReview = false
   }
   return { ...settings, forwardMultipleBasisVersion: 1, dcfBasisVersion: 1 }
+}
+
+/** Carry analyst inputs across dates/uploads; refresh only unchanged source defaults. */
+export function rebaseRunSettings(
+  previousModel: ReturnType<typeof prepareModel>,
+  model: ReturnType<typeof prepareModel>,
+  saved: RunSettings
+): RunSettings {
+  const previous = initialSettings(previousModel)
+  const defaults = initialSettings(model)
+  const settings = restoreRunSettings(model, saved)
+  for (const key of [
+    'currency',
+    'debt',
+    'cash',
+    'preferred',
+    'nci',
+    'shares',
+    'price',
+    'baseRevenue',
+    'baseWorkingCapital'
+  ] as const) {
+    if (
+      !saved[key].trim() ||
+      saved[key] === previous[key] ||
+      (key !== 'currency' &&
+        previous[key] !== '' &&
+        Number(saved[key]) === Number(previous[key]))
+    )
+      settings[key] = defaults[key]
+  }
+  settings.forecasts = defaults.forecasts.map((row, index) => {
+    const fiscalYear = model.fiscal.periods[index]?.fiscalYear
+    const priorIndex = fiscalYear
+      ? previousModel.fiscal.periods.findIndex(
+          (period) => period.fiscalYear === fiscalYear
+        )
+      : index
+    const prior = saved.forecasts[priorIndex]
+    const priorDefaults = previous.forecasts[priorIndex]
+    if (!prior || !priorDefaults) return row
+    return Object.fromEntries(
+      Object.entries(row).map(([key, value]) => {
+        const field = key as keyof ForecastRow
+        return [
+          field,
+          !prior[field].trim() || prior[field] === priorDefaults[field]
+            ? value
+            : prior[field]
+        ]
+      })
+    ) as ForecastRow
+  })
+  if (
+    relativeSnapshot(
+      model.relativeInputs,
+      model.context.valuationDate,
+      settings.relativeSnapshot
+    ).error
+  )
+    settings.relativeSnapshot = 'latest'
+  const preview = peerPreview(
+    model,
+    settings.multiple,
+    saved.relativePeriod,
+    settings.relativeSnapshot
+  )
+  settings.relativePeriod = preview.periodKey
+  settings.sourceReview = false
+  settings.capitalReview = false
+  settings.dcfReview = false
+  settings.peerProfileReview = false
+  settings.priorSnapshotReview = false
+  settings.peerSelections = Object.fromEntries(
+    Object.entries(saved.peerSelections).map(([id, selection]) => [
+      id,
+      {
+        ...selection,
+        ...(selection.research
+          ? { research: { ...selection.research, reviewed: false } }
+          : {})
+      }
+    ])
+  )
+  return settings
 }
 
 export function fillValuationDefaults(settings: RunSettings): RunSettings {
@@ -1154,8 +1249,14 @@ function forecastGrowth(
 export function peerPreview(
   model: ReturnType<typeof prepareModel>,
   multiple: Multiple,
-  requestedPeriod?: string
+  requestedPeriod?: string,
+  requestedSnapshot = 'latest'
 ) {
+  const snapshot = relativeSnapshot(
+    model.relativeInputs,
+    model.context.valuationDate,
+    requestedSnapshot
+  )
   const field = {
     'EV/Revenue': 'revenue',
     'EV/EBITDA': 'ebitda',
@@ -1165,6 +1266,7 @@ export function peerPreview(
   const metrics = model.relativeRecords.filter(
     (record) =>
       record.field === field &&
+      record.source.asOf <= snapshot.date &&
       relativeMetric(record, model.context.valuationDate)
   )
   const targetMetrics = metrics.filter((record) =>
@@ -1173,7 +1275,9 @@ export function peerPreview(
   const suppliedMultiples =
     multiple === 'EV/EBITDA'
       ? model.relativeInputs.filter(
-          (record) => record.field === 'evEbitdaForward'
+          (record) =>
+            record.field === 'evEbitdaForward' &&
+            record.source.asOf === snapshot.date
         )
       : []
   const peersFor = (target: NormalizedManual | undefined, key: string) =>
@@ -1189,6 +1293,7 @@ export function peerPreview(
         model.peerRecords.filter(
           (record) =>
             record.issuerId === issuerId &&
+            record.source.asOf === snapshot.date &&
             record.period.basis === 'instant' &&
             record.classification === 'market' &&
             record.field ===
@@ -1215,28 +1320,27 @@ export function peerPreview(
           !validDate(suppliedMultiple.period.endDate)
             ? 'SP_TEV_EBITDA_FWD value imported. Confirm its period end using the uploaded-multiple controls above.'
             : blocking?.message ||
-              (suppliedMultiple.source.asOf !== model.context.valuationDate
-                ? `Multiple snapshot ${suppliedMultiple.source.asOf} does not match valuation date ${model.context.valuationDate}`
-                : suppliedMultiple.classification !== 'consensus'
-                  ? 'Confirm this forward multiple as a consensus estimate in Map and confirm.'
-                  : !target
-                    ? 'Include the target company’s NTM TEV/EBITDA and TEV in Peer Data, or upload matching target EBITDA.'
-                    : target.issues.find(
-                        (issue) => issue.code !== 'REVIEW_REQUIRED'
-                      )?.message ||
-                      (target.value! <= 0
-                        ? 'N/M: the target earnings value is not positive'
-                        : suppliedMultiple.value === null ||
-                            suppliedMultiple.value <= 0
-                          ? 'N/M: nonpositive or unavailable uploaded multiple'
-                          : suppliedMultiple.period.basis !==
-                                target.period.basis ||
-                              suppliedMultiple.period.endDate !==
-                                target.period.endDate
-                            ? `Uploaded multiple period ${suppliedMultiple.period.basis} ${suppliedMultiple.period.endDate} differs from target ${target.period.basis} ${target.period.endDate}`
-                            : suppliedMultiple.definition !== target.definition
-                              ? 'Accounting definitions differ'
-                              : ''))
+              snapshot.error ||
+              (suppliedMultiple.classification !== 'consensus'
+                ? 'Confirm this forward multiple as a consensus estimate in Map and confirm.'
+                : !target
+                  ? 'Include the target company’s NTM TEV/EBITDA and TEV in Peer Data, or upload matching target EBITDA.'
+                  : target.issues.find(
+                      (issue) => issue.code !== 'REVIEW_REQUIRED'
+                    )?.message ||
+                    (target.value! <= 0
+                      ? 'N/M: the target earnings value is not positive'
+                      : suppliedMultiple.value === null ||
+                          suppliedMultiple.value <= 0
+                        ? 'N/M: nonpositive or unavailable uploaded multiple'
+                        : suppliedMultiple.period.basis !==
+                              target.period.basis ||
+                            suppliedMultiple.period.endDate !==
+                              target.period.endDate
+                          ? `Uploaded multiple period ${suppliedMultiple.period.basis} ${suppliedMultiple.period.endDate} differs from target ${target.period.basis} ${target.period.endDate}`
+                          : suppliedMultiple.definition !== target.definition
+                            ? 'Accounting definitions differ'
+                            : ''))
         return {
           issuerId,
           metric,
@@ -1247,7 +1351,12 @@ export function peerPreview(
             suppliedMultiple.value !== null && suppliedMultiple.value > 0
               ? suppliedMultiple.value
               : null,
-          growth: forecastGrowth(model.relativeRecords, metric)
+          growth: forecastGrowth(
+            model.relativeRecords.filter(
+              (record) => record.source.asOf <= snapshot.date
+            ),
+            metric
+          )
         }
       }
       const otherMetric = one(
@@ -1292,16 +1401,15 @@ export function peerPreview(
               ? 'Target metric is missing for the selected earnings period'
               : target.value! <= 0
                 ? 'N/M: the target earnings value is not positive'
-                : numerator.source.asOf !== model.context.valuationDate
-                  ? `Market snapshot ${numerator.source.asOf} does not match valuation date ${model.context.valuationDate}`
-                  : metric.period.endDate !== target.period.endDate
+                : snapshot.error ||
+                  (metric.period.endDate !== target.period.endDate
                     ? `Period ${metric.period.endDate} differs from target ${target.period.endDate}`
                     : metric.currency !== numerator.currency ||
                         metric.currency !== target.currency
                       ? 'Currencies differ; confirm source currencies or supply explicitly converted inputs.'
                       : metric.definition !== target.definition
                         ? 'Accounting definitions differ'
-                        : ''
+                        : '')
       return {
         issuerId,
         metric,
@@ -1316,7 +1424,12 @@ export function peerPreview(
           metric.currency === numerator.currency
             ? numerator.value / metric.value
             : null,
-        growth: forecastGrowth(model.relativeRecords, metric)
+        growth: forecastGrowth(
+          model.relativeRecords.filter(
+            (record) => record.source.asOf <= snapshot.date
+          ),
+          metric
+        )
       }
     })
   const choices = [
@@ -1388,7 +1501,22 @@ export function peerPreview(
     forward.find((choice) => choice.eligiblePeers >= 3) ||
     forward[0] ||
     choices[0]
-  const periodKey = requestedPeriod || defaultPeriod?.key || ''
+  const periodKey = !requestedPeriod
+    ? defaultPeriod?.key || ''
+    : requestedPeriod.startsWith('NTM:') &&
+        suppliedMultiples.some((record) => record.period.basis === 'NTM') &&
+        !suppliedMultiples.some(
+          (record) =>
+            `${record.period.basis}:${record.period.endDate}` ===
+            requestedPeriod
+        )
+      ? forward.find((choice) => choice.basis === 'NTM' && choice.uploadedPeers)
+          ?.key || requestedPeriod
+      : choices.some((choice) => choice.key === requestedPeriod)
+        ? requestedPeriod
+        : choices.find(
+            (choice) => choice.basis === requestedPeriod.split(':')[0]
+          )?.key || requestedPeriod
   const period = choices.find((choice) => choice.key === periodKey)
   const target = one(
     targetMetrics.filter(
@@ -1398,12 +1526,18 @@ export function peerPreview(
   )
   return {
     field,
+    snapshot,
     target,
     periodKey,
     periodChoices: choices,
     basis: period?.basis,
     periodLabel: period?.label || 'No mapped earnings period',
-    targetGrowth: forecastGrowth(model.relativeRecords, target),
+    targetGrowth: forecastGrowth(
+      model.relativeRecords.filter(
+        (record) => record.source.asOf <= snapshot.date
+      ),
+      target
+    ),
     peers: peersFor(target, periodKey)
   }
 }
@@ -1419,7 +1553,17 @@ export function executeRelative(
     settings.peerProfileReview,
     'Confirm the peer export currency, mixed-unit profile and saved snapshot date.'
   )
-  const preview = peerPreview(model, settings.multiple, settings.relativePeriod)
+  const preview = peerPreview(
+    model,
+    settings.multiple,
+    settings.relativePeriod,
+    settings.relativeSnapshot
+  )
+  requireValue(!preview.snapshot.error, preview.snapshot.error)
+  requireValue(
+    !preview.snapshot.ageDays || settings.priorSnapshotReview,
+    `Market data is from ${preview.snapshot.date}, ${preview.snapshot.ageDays} days before valuation ${context.valuationDate}. Review and accept this older snapshot or upload refreshed Peer Data.`
+  )
   requireValue(
     preview.target,
     `Map the target company's ${preview.field} for the selected earnings period. Forward comps need matching target earnings and peer forward multiples or earnings on the same basis, end date and accounting definition.`
@@ -1467,7 +1611,7 @@ export function executeRelative(
       (record) =>
         record.source.section === 'peers' &&
         sameIssuer(record.issuerId, issuer) &&
-        record.source.asOf === context.valuationDate
+        record.source.asOf === preview.snapshot.date
     )
     const price = one(market.filter((record) => record.field === 'price'))
     const shares = one(
@@ -1494,6 +1638,8 @@ export function executeRelative(
     )
   const input = {
     context: base.context,
+    marketSnapshotDate: preview.snapshot.date,
+    priorSnapshotAccepted: Boolean(settings.priorSnapshotReview),
     sources: base.sources,
     capitalization: base.capitalization,
     multiple: settings.multiple,
@@ -1577,10 +1723,6 @@ export function executeRelative(
       }
     })
   }
-  requireValue(
-    preview.basis !== 'LTM' || target.source.asOf === context.valuationDate,
-    `Peer snapshot is ${target.source.asOf}; set the valuation date to that date or upload a matching snapshot.`
-  )
   const result = calculateRelativeValuation(input)
   return { input, result, audit: used }
 }

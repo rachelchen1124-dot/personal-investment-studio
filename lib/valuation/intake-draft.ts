@@ -1,6 +1,16 @@
-import type { NormalizedManual, Observation, Upload } from './manual-intake.mjs'
-import type { IntakeContext, RunSettings } from './workflow.ts'
 import { proposeImport, restoreIntake } from './capital-iq.ts'
+import {
+  type NormalizedManual,
+  type Observation,
+  type Upload,
+  validDate
+} from './manual-intake.mjs'
+import {
+  type IntakeContext,
+  prepareModel,
+  rebaseRunSettings,
+  type RunSettings
+} from './workflow.ts'
 
 export type ModelDraft = { signature: string; settings: RunSettings }
 export type IntakeDraft = {
@@ -35,6 +45,48 @@ export function valuationModelKey(
       issues: record.issues.filter((issue) => issue.code !== 'REVIEW_REQUIRED')
     }))
   ])
+}
+
+/** Dates and refreshed source data invalidate results, while analyst inputs survive. */
+export function settingsFromModelDraft(
+  draft: ModelDraft | null,
+  context: IntakeContext,
+  records: NormalizedManual[]
+): RunSettings | undefined {
+  if (!draft) return undefined
+  if (draft.signature === valuationModelKey(context, records))
+    return draft.settings
+  try {
+    const parsed: unknown = JSON.parse(draft.signature)
+    if (!Array.isArray(parsed) || parsed.length !== 5) return undefined
+    const [company, issuerId, valuationDate, mode, previousRecords] = parsed
+    if (
+      typeof issuerId !== 'string' ||
+      typeof valuationDate !== 'string' ||
+      !validDate(valuationDate) ||
+      company !== context.company ||
+      issuerId.trim().toUpperCase() !== context.issuerId.trim().toUpperCase() ||
+      !Array.isArray(previousRecords)
+    )
+      return undefined
+    const previousContext = {
+      company,
+      issuerId,
+      valuationDate,
+      mode
+    } as IntakeContext
+    return rebaseRunSettings(
+      prepareModel(
+        previousRecords as NormalizedManual[],
+        previousContext,
+        draft.settings.forwardMultiplePeriods
+      ),
+      prepareModel(records, context, draft.settings.forwardMultiplePeriods),
+      draft.settings
+    )
+  } catch {
+    return undefined
+  }
 }
 
 /** Rebuild native mappings from original tables, including legacy packs without mappings. */
@@ -151,7 +203,11 @@ export function recoverModelDraft(raw: unknown): ModelDraft | null {
           !period ||
           !['FY', 'CY', 'NTM'].includes(period.basis) ||
           typeof period.endDate !== 'string'
-      ))
+      )) ||
+    (settings.relativeSnapshot !== undefined &&
+      typeof settings.relativeSnapshot !== 'string') ||
+    (settings.priorSnapshotReview !== undefined &&
+      typeof settings.priorSnapshotReview !== 'boolean')
   )
     return null
   const sourceSettings = { ...settings } as RunSettings & {
@@ -163,10 +219,12 @@ export function recoverModelDraft(raw: unknown): ModelDraft | null {
     settings: {
       ...sourceSettings,
       forwardMultiplePeriods: settings.forwardMultiplePeriods || {},
+      relativeSnapshot: settings.relativeSnapshot || 'latest',
       sourceReview: false,
       capitalReview: false,
       dcfReview: false,
       peerProfileReview: false,
+      priorSnapshotReview: false,
       peerSelections: Object.fromEntries(
         Object.entries(settings.peerSelections).map(([id, selection]) => [
           id,

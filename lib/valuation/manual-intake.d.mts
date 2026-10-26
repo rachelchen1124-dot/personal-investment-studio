@@ -110,3 +110,7 @@ export function normalizeManual(
   file: Upload,
   context: { valuationDate: string }
 ): NormalizedManual
+
+export function markInputConflicts(
+  records: NormalizedManual[]
+): NormalizedManual[]

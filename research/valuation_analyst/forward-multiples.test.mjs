@@ -516,7 +516,7 @@ test('confirming missing period metadata retains future-vintage and source-value
   )
   assert.throws(
     () => executeRelative(values, context, settings),
-    /Selected peers/
+    /No uploaded market snapshot/
   )
 })
 

@@ -146,12 +146,24 @@ export function ValuationModelRunner({
   const dcfRun = dcf?.signature === signature ? dcf.run : null
   const rvRun = relative?.signature === signature ? relative.run : null
   const preview = React.useMemo(
-    () => peerPreview(model, settings.multiple, settings.relativePeriod),
-    [model, settings.multiple, settings.relativePeriod]
+    () =>
+      peerPreview(
+        model,
+        settings.multiple,
+        settings.relativePeriod,
+        settings.relativeSnapshot
+      ),
+    [
+      model,
+      settings.multiple,
+      settings.relativePeriod,
+      settings.relativeSnapshot
+    ]
   )
   const uploadedMultiples = model.relativeInputs.filter(
     (record) =>
       settings.multiple === 'EV/EBITDA' &&
+      record.source.asOf === preview.snapshot.date &&
       record.field === 'evEbitdaForward' &&
       record.value !== null &&
       record.value > 0 &&
@@ -205,7 +217,7 @@ export function ValuationModelRunner({
     setFeedback(null)
   }
   const chooseRelativePeriod = (multiple: Multiple, period?: string) => {
-    const next = peerPreview(model, multiple, period)
+    const next = peerPreview(model, multiple, period, settings.relativeSnapshot)
     setSettings((current) => ({
       ...current,
       multiple,
@@ -239,6 +251,22 @@ export function ValuationModelRunner({
           ]
         })
       )
+    }))
+    setFeedback(null)
+  }
+  const chooseSnapshot = (value: string) => {
+    const next = peerPreview(
+      model,
+      settings.multiple,
+      settings.relativePeriod,
+      value
+    )
+    setSettings((current) => ({
+      ...current,
+      relativeSnapshot: value,
+      relativePeriod: next.periodKey,
+      priorSnapshotReview: false,
+      peerProfileReview: false
     }))
     setFeedback(null)
   }
@@ -341,7 +369,8 @@ export function ValuationModelRunner({
             const latest = peerPreview(
               model,
               current.multiple,
-              current.relativePeriod
+              current.relativePeriod,
+              current.relativeSnapshot
             )
             const item = latest.peers.find(
               (candidate) => candidate.issuerId === issuerId
@@ -591,6 +620,15 @@ export function ValuationModelRunner({
     }
     if (rvRun) {
       rows.push(
+        [
+          'Relative valuation dates',
+          'Valuation as of',
+          context.valuationDate,
+          'Market snapshot',
+          rvRun.result.marketSnapshotDate,
+          'Snapshot age (days)',
+          rvRun.result.snapshotAgeDays
+        ],
         [
           'Relative valuation',
           settings.multiple,
@@ -875,9 +913,12 @@ export function ValuationModelRunner({
         {input(
           'price',
           'Reference share price (optional)',
-          model.capital.price
+          model.capital.price &&
+            Number(settings.price) === model.capital.price.value
             ? 'Source snapshot: ' + model.capital.price.source.asOf
-            : 'Optional; leave empty to omit upside.'
+            : settings.price.trim()
+              ? 'Analyst-entered reference price for ' + context.valuationDate
+              : 'Optional; leave empty to omit upside.'
         )}
       </div>
       <button
@@ -1083,7 +1124,66 @@ export function ValuationModelRunner({
 
       {context.mode !== 'dcf' ? (
         <>
-          <h3 className={styles.modelHeading}>3. Relative valuation</h3>
+          <h3 className={styles.modelHeading}>
+            3. Relative valuation · as of {context.valuationDate}
+          </h3>
+          <section
+            className={styles.status}
+            aria-label='Relative valuation dates'
+          >
+            <strong>Valuation as of {context.valuationDate}</strong>
+            <label>
+              Market data snapshot
+              <select
+                value={settings.relativeSnapshot || 'latest'}
+                onChange={(event) => chooseSnapshot(event.target.value)}
+              >
+                <option value='latest'>
+                  Latest available
+                  {preview.snapshot.dates[0]
+                    ? ` · ${preview.snapshot.dates[0]}`
+                    : ' · upload Peer Data'}
+                </option>
+                {preview.snapshot.dates.map((date) => (
+                  <option key={date} value={date}>
+                    {date}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {preview.snapshot.error ? (
+              <p role='alert'>{preview.snapshot.error}</p>
+            ) : (
+              <p>
+                Market data as of <strong>{preview.snapshot.date}</strong> ·{' '}
+                {preview.snapshot.ageDays === 0
+                  ? 'same-day snapshot'
+                  : `${preview.snapshot.ageDays} days before valuation`}
+                . All peer multiples use this snapshot.
+              </p>
+            )}
+            <p>
+              New uploads are selected automatically in “Latest available” mode.
+              Changing the valuation date does not refresh uploaded prices or
+              estimates. Upload refreshed Peer Data for a newer market snapshot;
+              NTM earnings dates remain those of the source.
+            </p>
+            {preview.snapshot.ageDays ? (
+              <label className={styles.confirm}>
+                <input
+                  type='checkbox'
+                  checked={Boolean(settings.priorSnapshotReview)}
+                  onChange={(event) =>
+                    set('priorSnapshotReview', event.target.checked)
+                  }
+                />
+                I accept using the {preview.snapshot.date} market snapshot for
+                the {context.valuationDate} valuation (
+                {preview.snapshot.ageDays} days old). These are uploaded values,
+                not live market data.
+              </label>
+            ) : null}
+          </section>
           <p>
             Choose at least three comparable issuers and document why they
             belong in the peer set. The target is excluded automatically.
@@ -1106,7 +1206,7 @@ export function ValuationModelRunner({
             </select>
           </label>
           <label>
-            Earnings period
+            Earnings period (source basis)
             <select
               value={preview.periodKey}
               onChange={(event) =>
@@ -1339,7 +1439,9 @@ export function ValuationModelRunner({
           <div className={styles.tableWrap}>
             <table className={styles.reviewTable}>
               <caption className={styles.caption}>
-                Peer {settings.multiple} multiples · {preview.periodLabel}.
+                Peer {settings.multiple} multiples · valuation as of{' '}
+                {context.valuationDate} · market snapshot{' '}
+                {preview.snapshot.date || 'missing'} · {preview.periodLabel}.
                 Flagged selections need their valuation checks resolved before
                 calculation.
               </caption>
@@ -1413,8 +1515,23 @@ export function ValuationModelRunner({
                         ) : null}
                       </td>
                       <td>
+                        <small>Valuation: {context.valuationDate}</small>
+                        <small>
+                          Market:{' '}
+                          {(peer.suppliedMultiple || peer.numerator)?.source
+                            .asOf || 'Missing for this snapshot'}
+                          {preview.snapshot.ageDays
+                            ? ` · ${preview.snapshot.ageDays} days old`
+                            : ''}
+                        </small>
+                        <small>Earnings end:</small>
                         {(peer.suppliedMultiple || peer.metric)?.period
                           .endDate || 'Missing'}
+                        <small>
+                          Forecast / reported vintage:{' '}
+                          {(peer.suppliedMultiple || peer.metric)?.source
+                            .asOf || 'Missing'}
+                        </small>
                         {peer.suppliedMultiple?.forwardPeriodConfirmation ? (
                           <small>
                             {peer.suppliedMultiple.forwardPeriodConfirmation.note.startsWith(
@@ -1936,9 +2053,22 @@ export function ValuationModelRunner({
               aria-labelledby='rv-result-title'
             >
               <h4 id='rv-result-title'>
-                Relative valuation results · {rvRun.result.multiple} ·{' '}
+                Relative valuation results · as of {context.valuationDate} ·{' '}
+                {rvRun.result.multiple} ·{' '}
                 {relativePeriodLabel(rvRun.result.period)}
               </h4>
+              <p
+                className={
+                  rvRun.result.snapshotAgeDays ? styles.notice : styles.caption
+                }
+              >
+                Market snapshot: {rvRun.result.marketSnapshotDate}
+                {rvRun.result.snapshotAgeDays
+                  ? ` · ${rvRun.result.snapshotAgeDays} days before valuation · older data accepted`
+                  : ' · same-day data'}
+                . Earnings period end: {rvRun.result.period.endDate}. Uploaded
+                values have not been rolled forward.
+              </p>
               {rvRun.result.selectedTarget ? (
                 <div className={styles.status}>
                   <strong>

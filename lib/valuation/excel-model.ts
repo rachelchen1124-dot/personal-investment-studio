@@ -1006,7 +1006,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
             record.definition === group.definition &&
             record.currency === group.currency &&
             record.period.endDate === date &&
-            record.source.asOf <= context.valuationDate
+            record.source.asOf <=
+              (relative?.result.marketSnapshotDate || context.valuationDate)
         )
         const newest = choices
           .map((record) => record.source.asOf)
@@ -1037,7 +1038,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     w.put('C2', context.company + ' relative valuation', 'title')
     w.put(
       'C3',
-      `${settings.multiple}; ${relativePeriodLabel(relative.result.period)}. Peer quartiles are benchmarks; the analyst target multiple is separate.`,
+      `Valuation as of ${context.valuationDate}; market snapshot ${relative.result.marketSnapshotDate} (${relative.result.snapshotAgeDays} days old). ${settings.multiple}; ${relativePeriodLabel(relative.result.period)}. Peer quartiles are benchmarks; the analyst target multiple is separate.`,
       'note'
     )
     const headers = [
@@ -1060,7 +1061,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     const preview = peerPreview(
       model,
       settings.multiple,
-      `${relative.result.period.basis}:${relative.result.period.endDate}`
+      `${relative.result.period.basis}:${relative.result.period.endDate}`,
+      relative.result.marketSnapshotDate
     )
     for (const [index, peer] of rows.entries()) {
       const row = index + 6
@@ -1098,7 +1100,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
           peer.multiple
         )
       }
-      w.put('G' + row, serial(context.valuationDate), 'date')
+      w.put('G' + row, serial(used.valuationDate), 'date')
       w.put('H' + row, serial(relative.result.period.endDate), 'date')
       w.put('I' + row, relative.result.period.definition)
       w.put('J' + row, peer.rationale)
@@ -1311,8 +1313,11 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   )
   w.put(
     'C4',
-    input.scenarioNote ||
-      'Exported from the current reviewed inputs. Edit blue input cells to recalculate the Excel model.',
+    (input.scenarioNote ||
+      'Exported from the current reviewed inputs. Edit blue input cells to recalculate the Excel model.') +
+      (relative
+        ? ` Relative valuation market snapshot ${relative.result.marketSnapshotDate}; ${relative.result.snapshotAgeDays} days before valuation. Uploaded values and earnings horizons remain at their source dates.`
+        : ''),
     'note'
   )
   let row = 6

@@ -9,6 +9,7 @@ import {
   rebuildIntake,
   recoverModelDraft,
   saveIntakeDraft,
+  settingsFromModelDraft,
   valuationModelKey
 } from '@/lib/valuation/intake-draft'
 import {
@@ -16,6 +17,7 @@ import {
   type Classification,
   fields,
   mapTemplate,
+  markInputConflicts,
   normalizeManual,
   type Observation,
   parseDelimited,
@@ -377,41 +379,7 @@ export function ValuationDataIntake() {
         valuationDate
       })
     )
-    const groups = new Map<string, number[]>()
-    for (const [index, record] of normalized.entries()) {
-      const key = [
-        record.issuerId,
-        record.field,
-        record.classification,
-        record.period.basis,
-        record.period.endDate,
-        record.source.section
-      ].join('|')
-      const indices = groups.get(key) || []
-      indices.push(index)
-      groups.set(key, indices)
-    }
-    for (const indices of groups.values()) {
-      if (indices.length < 2) continue
-      const definitions = new Set(
-        indices.map((index) =>
-          JSON.stringify([
-            normalized[index]!.value,
-            normalized[index]!.currency,
-            normalized[index]!.definition
-          ])
-        )
-      )
-      if (definitions.size > 1) {
-        for (const index of indices)
-          normalized[index]!.issues.push({
-            code: 'CONFLICTING_INPUTS',
-            message:
-              'Competing values or definitions require an explicit reconciliation.'
-          })
-      }
-    }
-    return normalized
+    return markInputConflicts(normalized)
   }, [observations, fileMap, valuationDate])
   const selected = fileMap.get(selectedId) || uploads[0]
   const selectedForwardMultiples = observations.filter(
@@ -830,6 +798,15 @@ export function ValuationDataIntake() {
   const modelKey = valuationModelKey(
     { company, issuerId, valuationDate, mode },
     records
+  )
+  const restoredModelSettings = React.useMemo(
+    () =>
+      settingsFromModelDraft(
+        modelDraft,
+        { company, issuerId, valuationDate, mode },
+        records
+      ),
+    [modelDraft, company, issuerId, valuationDate, mode, records]
   )
   const rememberModelSettings = React.useCallback(
     (settings: RunSettings) => {
@@ -1568,9 +1545,7 @@ export function ValuationDataIntake() {
           key={modelKey}
           records={records}
           files={uploads}
-          initialRunSettings={
-            modelDraft?.signature === modelKey ? modelDraft.settings : undefined
-          }
+          initialRunSettings={restoredModelSettings}
           onSettingsChange={rememberModelSettings}
           context={{ company, issuerId, valuationDate, mode }}
           onReview={() => setStage('review')}
