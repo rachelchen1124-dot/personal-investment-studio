@@ -96,6 +96,7 @@ export function ValuationModelRunner({
   context,
   onReview,
   onUseCurrentMarket,
+  onUpdatePeerData,
   files,
   initialRunSettings,
   onSettingsChange
@@ -104,6 +105,7 @@ export function ValuationModelRunner({
   context: IntakeContext
   onReview: () => void
   onUseCurrentMarket: () => void
+  onUpdatePeerData: () => void
   files?: Upload[]
   initialRunSettings?: RunSettings
   onSettingsChange?: (settings: RunSettings) => void
@@ -232,10 +234,7 @@ export function ValuationModelRunner({
       record.value > 0 &&
       preview.peers.some((peer) => peer.issuerId === record.issuerId)
   )
-  const previewPeriodLabel =
-    currentMarket && preview.basis === 'NTM'
-      ? `Forward EBITDA · uploaded NTM window to ${preview.target?.period.endDate || preview.periodKey.split(':')[1]}`
-      : preview.periodLabel
+  const previewPeriodLabel = preview.periodLabel
   const unresolvedMultipleFiles = (files || [])
     .map((file) => ({
       file,
@@ -1430,7 +1429,7 @@ export function ValuationModelRunner({
             </select>
           </label>
           <label>
-            Earnings period (source basis)
+            Earnings period for this valuation
             <select
               value={preview.periodKey}
               onChange={(event) =>
@@ -1442,10 +1441,7 @@ export function ValuationModelRunner({
               ) : null}
               {preview.periodChoices.map((period) => (
                 <option key={period.key} value={period.key}>
-                  {currentMarket && period.basis === 'NTM'
-                    ? `Forward EBITDA · uploaded NTM window to ${period.endDate}`
-                    : period.label}{' '}
-                  · {period.eligiblePeers} ready peers
+                  {period.label} · {period.eligiblePeers} ready peers
                   {period.basis !== 'LTM' &&
                   period.uploadedPeers &&
                   !period.eligiblePeers
@@ -1455,23 +1451,66 @@ export function ValuationModelRunner({
               ))}
             </select>
           </label>
-          {uploadedMultiples.length && preview.basis !== 'LTM' ? (
+          {preview.ntmAlignment ? (
+            <section
+              className={
+                preview.ntmAlignment.error ? styles.notice : styles.status
+              }
+              aria-label='NTM forecast alignment'
+            >
+              <strong>
+                NTM window · {context.valuationDate} to{' '}
+                {preview.ntmAlignment.requiredEndDate}
+              </strong>
+              <p>
+                {preview.ntmAlignment.error ||
+                  'Target and peer earnings must cover this same window. Estimate publication dates are shown separately in the peer checks.'}
+              </p>
+              {preview.ntmAlignment.error ? (
+                <>
+                  <p>
+                    Uploaded NTM windows end:{' '}
+                    {preview.ntmAlignment.sourceEndDates.join(', ') ||
+                      'no dated NTM estimates found'}
+                    . Current stock prices do not refresh the earnings forecast.
+                    Existing values remain visible as reference data.
+                  </p>
+                  <p>
+                    Upload Peer Data with SP_TEV_EBITDA_FWD for the target and
+                    at least three peers covering this window. Include the
+                    target TEV so its EBITDA can be drawn from the Excel data.
+                  </p>
+                  <button type='button' onClick={onUpdatePeerData}>
+                    Upload updated Peer Data
+                  </button>
+                </>
+              ) : null}
+            </section>
+          ) : null}
+          {(uploadedMultipleValues.length || unresolvedMultipleFiles.length) &&
+          preview.basis !== 'LTM' ? (
             <section
               className={styles.notice}
               aria-label='Uploaded forward EBITDA multiples'
             >
               <strong>
-                {uploadedMultipleValues.length}{' '}
-                {currentMarket
-                  ? 'price-updated forward EV/EBITDA'
-                  : 'peer SP_TEV_EBITDA_FWD'}{' '}
-                multiples for {previewPeriodLabel} · median{' '}
-                {format(uploadedMedian)}×
+                {uploadedMultipleValues.length ? (
+                  <>
+                    {uploadedMultipleValues.length}{' '}
+                    {currentMarket
+                      ? 'price-updated forward EV/EBITDA'
+                      : 'peer SP_TEV_EBITDA_FWD'}{' '}
+                    multiples for {previewPeriodLabel} · median{' '}
+                    {format(uploadedMedian)}×
+                  </>
+                ) : (
+                  'Forward multiple period confirmation required'
+                )}
               </strong>
               <p>
                 {currentMarket
-                  ? 'Current EV uses the latest price and uploaded shares and EV-to-equity adjustments. Forward multiples use the uploaded EBITDA estimate; its financial period stays unchanged until estimates are refreshed.'
-                  : 'The uploaded ratios are the peer TEV/EBITDA inputs. Peer TEV and EBITDA amounts are not required for these rows. NTM covers the next twelve months from the upload snapshot date.'}{' '}
+                  ? 'Current EV uses the latest price and uploaded shares and EV-to-equity adjustments. Only forecasts matching the selected earnings window are eligible.'
+                  : 'The uploaded ratios are the peer TEV/EBITDA inputs. Peer TEV and EBITDA amounts are not required for these rows. NTM must cover the next twelve months from the valuation date.'}{' '}
                 {uploadedMultiples.length} source observations found; each
                 issuer counts once in the selected-period median.
               </p>
@@ -1752,7 +1791,13 @@ export function ValuationModelRunner({
                             : format(peer.multiple) + '×'}
                         </strong>
                         {peer.multiple !== null && peer.reason ? (
-                          <small>Review required</small>
+                          <small>
+                            {preview.basis === 'NTM' &&
+                            (peer.suppliedMultiple || peer.metric)?.period
+                              .endDate !== preview.ntmAlignment?.requiredEndDate
+                              ? 'Reference only · different earnings window'
+                              : 'Review required'}
+                          </small>
                         ) : null}
                         {peer.growth ? (
                           <small>
@@ -1763,6 +1808,12 @@ export function ValuationModelRunner({
                       </td>
                       <td>
                         <small>Valuation: {context.valuationDate}</small>
+                        {preview.ntmAlignment ? (
+                          <small>
+                            Required NTM end:{' '}
+                            {preview.ntmAlignment.requiredEndDate}
+                          </small>
+                        ) : null}
                         <small>
                           Market:{' '}
                           {(peer.suppliedMultiple || peer.numerator)?.source
@@ -2327,10 +2378,10 @@ export function ValuationModelRunner({
               <h4 id='rv-result-title'>
                 Relative valuation results · as of {context.valuationDate} ·{' '}
                 {rvRun.result.multiple} ·{' '}
-                {rvRun.result.marketDataMode === 'current-prices' &&
-                rvRun.result.period.basis === 'NTM'
-                  ? `Forward EBITDA · uploaded NTM window to ${rvRun.result.period.endDate}`
-                  : relativePeriodLabel(rvRun.result.period)}
+                {relativePeriodLabel(
+                  rvRun.result.period,
+                  context.valuationDate
+                )}
               </h4>
               <p
                 className={
@@ -2384,10 +2435,10 @@ export function ValuationModelRunner({
               <p>
                 {rvRun.result.included.length} independent peers included.
                 Target metric {format(rvRun.result.targetMetric)},{' '}
-                {rvRun.result.marketDataMode === 'current-prices' &&
-                rvRun.result.period.basis === 'NTM'
-                  ? `Forward EBITDA · uploaded NTM window to ${rvRun.result.period.endDate}`
-                  : relativePeriodLabel(rvRun.result.period)}
+                {relativePeriodLabel(
+                  rvRun.result.period,
+                  context.valuationDate
+                )}
                 . Percentiles describe this selected peer set.
               </p>
               {rvRun.result.excluded.length ? (

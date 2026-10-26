@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { localToday, priceSymbol } from '../../lib/valuation/market-prices.ts'
+import { ntmPeriodEnd } from '../../lib/valuation/forward-period.ts'
 import {
   fetchMarketPrices,
   parseMarketQuote
@@ -13,7 +14,8 @@ import { buildValuationWorkbook } from '../../lib/valuation/excel-model.ts'
 import {
   prepareModel,
   initialSettings,
-  executeRelative
+  executeRelative,
+  peerPreview
 } from '../../lib/valuation/workflow.ts'
 import {
   recoverModelDraft,
@@ -59,7 +61,7 @@ function record(id, field, value, basis = 'instant', endDate = baseline) {
     issues: []
   }
 }
-function records() {
+function records(windowDate = date) {
   return [
     ['DEMO', 10],
     ['NYSE:PEER1', 8],
@@ -70,7 +72,7 @@ function records() {
     record(id, 'basicShares', 100),
     record(id, 'enterpriseValue', price * 100),
     record(id, 'equityValue', price * 100),
-    record(id, 'evEbitdaForward', price, 'NTM', '2027-10-22')
+    record(id, 'evEbitdaForward', price, 'NTM', ntmPeriodEnd(windowDate))
   ])
 }
 function quote(issuerId, price) {
@@ -169,7 +171,7 @@ test('current price moves EV, forward multiples and relative value while holding
       (r) =>
         r.source.asOf === date &&
         r.marketRefresh.estimateAsOf === baseline &&
-        r.period.endDate === '2027-10-22'
+        r.period.endDate === '2027-10-26'
     )
   )
   const held = model.consensus.find(
@@ -186,6 +188,78 @@ test('current price moves EV, forward multiples and relative value while holding
   assert.equal(run.result.median.valuePerShare, 12)
   assert.equal(run.result.marketUpdatedAt, asOf)
   assert.deepEqual(input, copy)
+})
+
+test('a live price refresh cannot turn an old NTM forecast into a current window', () => {
+  const input = records(baseline),
+    copy = structuredClone(input),
+    live = updated(input),
+    model = prepareModel(live.records, ctx),
+    preview = peerPreview(model, 'EV/EBITDA', 'NTM:2027-10-22')
+  assert.equal(model.capital.price.value, 14)
+  assert.equal(preview.periodKey, 'NTM:2027-10-26')
+  assert.equal(preview.target, undefined)
+  assert.equal(
+    preview.periodChoices.find((p) => p.key === preview.periodKey)
+      .eligiblePeers,
+    0
+  )
+  assert.deepEqual(
+    preview.peers.map((p) => p.multiple),
+    [9, 12, 15]
+  )
+  assert.ok(
+    preview.peers.every((p) => p.reason.includes('NTM ending 2027-10-26'))
+  )
+  assert.ok(
+    live.records
+      .filter((r) => r.field === 'evEbitdaForward')
+      .every((r) => r.period.endDate === '2027-10-22')
+  )
+  assert.throws(
+    () => executeRelative(live.records, ctx, settings(live.records)),
+    /must end 2027-10-26/
+  )
+  assert.deepEqual(input, copy)
+})
+
+test('a matching target window cannot be combined with stale peer forecasts after repricing', () => {
+  const input = records().map((r) =>
+      r.issuerId !== 'DEMO' && r.period.basis === 'NTM'
+        ? { ...r, period: { ...r.period, endDate: '2027-10-22' } }
+        : r
+    ),
+    live = updated(input),
+    preview = peerPreview(prepareModel(live.records, ctx), 'EV/EBITDA')
+  assert.equal(preview.target.value, 100)
+  assert.equal(preview.periodKey, 'NTM:2027-10-26')
+  assert.throws(
+    () => executeRelative(live.records, ctx, settings(live.records)),
+    /Selected peers.*2027-10-26/
+  )
+})
+
+test('new aligned source data restores calculation automatically after an old window was blocked', () => {
+  const old = records(baseline),
+    oldLive = updated(old)
+  assert.throws(
+    () => executeRelative(oldLive.records, ctx, settings(oldLive.records)),
+    /must end 2027-10-26/
+  )
+  const fresh = records().map((r) => ({
+      ...r,
+      source: { ...r.source, id: r.source.id + ':fresh', asOf: date },
+      period: {
+        ...r.period,
+        endDate: r.period.basis === 'instant' ? date : r.period.endDate
+      }
+    })),
+    live = updated([...old, ...fresh]),
+    run = executeRelative(live.records, ctx, settings(live.records))
+  assert.equal(run.result.period.endDate, '2027-10-26')
+  assert.equal(run.result.targetMetric, 100)
+  assert.equal(run.result.median.multiple, 12)
+  assert.equal(run.result.context.valuationDate, date)
 })
 
 test('successive refreshes recompute from the original base and never compound prior EV price changes', () => {
@@ -267,7 +341,7 @@ test('quotes after a historical valuation are rejected and historical calculatio
     live = updated(records(), batch(), old)
   assert.equal(live.records.filter((r) => r.marketRefresh).length, 0)
   assert.match(live.errors.DEMO, /after the valuation date/)
-  const input = records(),
+  const input = records(baseline),
     manual = {
       ...settings(input, old),
       marketDataMode: 'uploaded',
@@ -479,7 +553,7 @@ test('weekend valuations retain the genuine last trading day while using the cur
     asOf: '2026-10-30T20:00:00Z',
     retrievedAt: data.retrievedAt
   }))
-  const live = updated(records(), data, weekend)
+  const live = updated(records('2026-10-31'), data, weekend)
   const run = executeRelative(
     live.records,
     weekend,
@@ -493,7 +567,7 @@ test('weekend valuations retain the genuine last trading day while using the cur
 
 test('a weekend upload can use the actual last trading quote with its later, explicitly held estimate vintage', () => {
   const weekend = { ...ctx, valuationDate: '2026-10-31' }
-  const input = records().map((r) => ({
+  const input = records('2026-10-31').map((r) => ({
     ...r,
     source: { ...r.source, asOf: '2026-10-31' },
     period: {

@@ -1220,10 +1220,13 @@ export function executeDcf(
   }
 }
 
-export function relativePeriodLabel(period: {
-  basis: string
-  endDate: string
-}) {
+export function relativePeriodLabel(
+  period: {
+    basis: string
+    endDate: string
+  },
+  valuationDate?: string
+) {
   const name =
     period.basis === 'FY'
       ? 'FY estimate'
@@ -1232,7 +1235,7 @@ export function relativePeriodLabel(period: {
         : period.basis === 'NTM'
           ? 'NTM estimate'
           : 'LTM actual'
-  return `${name} · ${period.endDate}`
+  return `${name} · ${period.basis === 'NTM' && valuationDate ? valuationDate + ' to ' : ''}${period.endDate}`
 }
 
 function relativeMetric(record: NormalizedManual, date: string) {
@@ -1299,6 +1302,7 @@ export function peerPreview(
   requestedPeriod?: string,
   requestedSnapshot = 'latest'
 ) {
+  const requiredNtmEnd = ntmPeriodEnd(model.context.valuationDate)
   const snapshot = relativeSnapshot(
     model.relativeInputs,
     model.context.valuationDate,
@@ -1369,7 +1373,12 @@ export function peerPreview(
           !['FY', 'CY', 'NTM'].includes(suppliedMultiple.period.basis) ||
           !validDate(suppliedMultiple.period.endDate)
             ? 'SP_TEV_EBITDA_FWD value imported. Confirm its period end using the uploaded-multiple controls above.'
-            : blocking?.message ||
+            : (key.startsWith('NTM:') &&
+              (suppliedMultiple.period.basis !== 'NTM' ||
+                suppliedMultiple.period.endDate !== requiredNtmEnd)
+                ? `NTM ending ${requiredNtmEnd} is required for valuation ${model.context.valuationDate}. This source covers ${suppliedMultiple.period.basis} ending ${suppliedMultiple.period.endDate}, which differs from the required window; refresh its forecast.`
+                : '') ||
+              blocking?.message ||
               snapshot.error ||
               (suppliedMultiple.classification !== 'consensus'
                 ? 'Confirm this forward multiple as a consensus estimate in Map and confirm.'
@@ -1482,7 +1491,7 @@ export function peerPreview(
         )
       }
     })
-  const choices = [
+  const sourceKeys = [
     ...new Set(
       [
         ...targetMetrics,
@@ -1494,6 +1503,15 @@ export function peerPreview(
       ].map((record) => `${record.period.basis}:${record.period.endDate}`)
     )
   ]
+  const hasNtm =
+    requestedPeriod?.startsWith('NTM:') ||
+    sourceKeys.some((key) => key.startsWith('NTM:'))
+  const periodKeys = sourceKeys.filter(
+    (key) => !key.startsWith('NTM:') || key === `NTM:${requiredNtmEnd}`
+  )
+  if (hasNtm && !periodKeys.includes(`NTM:${requiredNtmEnd}`))
+    periodKeys.push(`NTM:${requiredNtmEnd}`)
+  const choices = periodKeys
     .map((key) => {
       const [basis, endDate] = key.split(':') as [MetricPeriod['basis'], string]
       const target = one(
@@ -1505,7 +1523,10 @@ export function peerPreview(
         key,
         basis,
         endDate,
-        label: relativePeriodLabel({ basis, endDate }),
+        label: relativePeriodLabel(
+          { basis, endDate },
+          model.context.valuationDate
+        ),
         eligiblePeers: peersFor(target, key).filter((peer) => !peer.reason)
           .length,
         uploadedPeers: peersFor(target, key).filter(
@@ -1539,29 +1560,14 @@ export function peerPreview(
     })
   const forward = choices.filter((choice) => choice.basis !== 'LTM')
   const defaultPeriod =
-    forward.find(
-      (choice) =>
-        choice.basis === 'NTM' &&
-        suppliedMultiples.some(
-          (record) =>
-            record.period.basis === 'NTM' &&
-            record.period.endDate === choice.endDate
-        )
-    ) ||
+    forward.find((choice) => choice.basis === 'NTM') ||
     forward.find((choice) => choice.eligiblePeers >= 3) ||
     forward[0] ||
     choices[0]
   const periodKey = !requestedPeriod
     ? defaultPeriod?.key || ''
-    : requestedPeriod.startsWith('NTM:') &&
-        suppliedMultiples.some((record) => record.period.basis === 'NTM') &&
-        !suppliedMultiples.some(
-          (record) =>
-            `${record.period.basis}:${record.period.endDate}` ===
-            requestedPeriod
-        )
-      ? forward.find((choice) => choice.basis === 'NTM' && choice.uploadedPeers)
-          ?.key || requestedPeriod
+    : requestedPeriod.startsWith('NTM:')
+      ? `NTM:${requiredNtmEnd}`
       : choices.some((choice) => choice.key === requestedPeriod)
         ? requestedPeriod
         : choices.find(
@@ -1574,6 +1580,37 @@ export function peerPreview(
         `${record.period.basis}:${record.period.endDate}` === periodKey
     )
   )
+  const peers = peersFor(target, periodKey)
+  const sourceNtm = model.records.filter(
+    (record) =>
+      record.period.basis === 'NTM' &&
+      record.period.months === 12 &&
+      (record.field === field ||
+        (multiple === 'EV/EBITDA' && record.field === 'evEbitdaForward')) &&
+      record.source.asOf <= estimateCutoff
+  )
+  const matchingWindow = (issuerId: string) =>
+    sourceNtm.some(
+      (record) =>
+        sameIssuer(record.issuerId, issuerId) &&
+        record.period.endDate === requiredNtmEnd
+    )
+  const ntmAlignment =
+    period?.basis === 'NTM'
+      ? {
+          requiredEndDate: requiredNtmEnd,
+          sourceEndDates: [
+            ...new Set(
+              sourceNtm.map((record) => record.period.endDate).filter(validDate)
+            )
+          ].toSorted(),
+          error: !matchingWindow(model.context.issuerId)
+            ? `NTM for valuation ${model.context.valuationDate} must end ${requiredNtmEnd}. Map the target company's ${field} for this window. Upload updated target and peer forecasts; older earnings are retained as reference data only.`
+            : model.peers.filter(matchingWindow).length < 3
+              ? `Selected peers need NTM ending ${requiredNtmEnd} for valuation ${model.context.valuationDate}. At least three peers need matching forecasts for this window. Older-window multiples cannot be used as current NTM inputs.`
+              : ''
+        }
+      : undefined
   return {
     field,
     snapshot,
@@ -1582,13 +1619,14 @@ export function peerPreview(
     periodChoices: choices,
     basis: period?.basis,
     periodLabel: period?.label || 'No mapped earnings period',
+    ntmAlignment,
     targetGrowth: forecastGrowth(
       model.relativeRecords.filter(
         (record) => record.source.asOf <= estimateCutoff
       ),
       target
     ),
-    peers: peersFor(target, periodKey)
+    peers
   }
 }
 
@@ -1620,6 +1658,7 @@ export function executeRelative(
       'The current target price currency must match the valuation currency.'
     )
   }
+  requireValue(!preview.ntmAlignment?.error, preview.ntmAlignment?.error || '')
   requireValue(!preview.snapshot.error, preview.snapshot.error)
   requireValue(
     !preview.snapshot.ageDays || settings.priorSnapshotReview || currentPrices,

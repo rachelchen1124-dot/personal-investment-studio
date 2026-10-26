@@ -1,3 +1,4 @@
+import { ntmPeriodEnd } from './forward-period.ts'
 import { fields, type NormalizedManual, type Upload } from './manual-intake.mjs'
 import {
   type executeDcf,
@@ -147,6 +148,13 @@ function writer(target: ExcelSheet) {
 /** One sheet owns each calculation. Formulas and cached values use the same inputs as the UI. */
 export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   const { context, settings, dcf, relative } = input
+  if (
+    relative?.result.period.basis === 'NTM' &&
+    relative.result.period.endDate !== ntmPeriodEnd(context.valuationDate)
+  )
+    throw new Error(
+      `NTM export requires forecasts ending ${ntmPeriodEnd(context.valuationDate)} for valuation ${context.valuationDate}. Recalculate with aligned target and peer data.`
+    )
   const model = prepareModel(
     input.records,
     context,

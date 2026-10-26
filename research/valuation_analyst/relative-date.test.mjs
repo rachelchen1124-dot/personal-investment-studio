@@ -25,7 +25,8 @@ const context = (valuationDate) => ({
 })
 const definition = 'Provider EBITDA; consistent adjustments for every issuer.'
 function record(issuerId, field, value, date, basis, endDate = date) {
-  const consensus = field === 'evEbitdaForward' || basis === 'NTM'
+  const consensus =
+    field === 'evEbitdaForward' || ['NTM', 'FY', 'CY'].includes(basis)
   return {
     issuerId,
     field,
@@ -49,7 +50,13 @@ function record(issuerId, field, value, date, basis, endDate = date) {
     issues: []
   }
 }
-function snapshot(date, multiple = 10, tev = 1000, price = 10) {
+function snapshot(
+  date,
+  multiple = 10,
+  tev = 1000,
+  price = 10,
+  windowDate = date
+) {
   return [
     record(
       'DEMO',
@@ -57,7 +64,7 @@ function snapshot(date, multiple = 10, tev = 1000, price = 10) {
       multiple,
       date,
       'NTM',
-      ntmPeriodEnd(date)
+      ntmPeriodEnd(windowDate)
     ),
     record('DEMO', 'enterpriseValue', tev, date, 'instant'),
     record('DEMO', 'price', price, date, 'instant'),
@@ -69,7 +76,7 @@ function snapshot(date, multiple = 10, tev = 1000, price = 10) {
         value,
         date,
         'NTM',
-        ntmPeriodEnd(date)
+        ntmPeriodEnd(windowDate)
       )
     )
   ]
@@ -102,31 +109,30 @@ function settingsFor(records, ctx) {
   }
 }
 
-test('moving the valuation date retains target EBITDA and peer ratios at their genuine snapshot dates', () => {
+test('moving the valuation date advances the required NTM window and blocks old forecasts without relabeling source data', () => {
   const records = snapshot('2026-10-22'),
     ctx = context('2026-10-26')
   const preview = peerPreview(prepareModel(records, ctx), 'EV/EBITDA')
   assert.equal(preview.snapshot.date, '2026-10-22')
   assert.equal(preview.snapshot.ageDays, 4)
-  assert.equal(preview.target.value, 100)
-  assert.equal(preview.periodKey, 'NTM:2027-10-22')
-  assert.ok(preview.peers.every((p) => !p.reason))
+  assert.equal(preview.target, undefined)
+  assert.equal(preview.periodKey, 'NTM:2027-10-26')
+  assert.deepEqual(preview.ntmAlignment.sourceEndDates, ['2027-10-22'])
+  assert.ok(preview.peers.every((p) => /NTM ending 2027-10-26/.test(p.reason)))
+  assert.ok(
+    records
+      .filter((r) => r.period.basis === 'NTM')
+      .every((r) => r.period.endDate === '2027-10-22')
+  )
   const settings = settingsFor(records, ctx)
   assert.throws(
     () => executeRelative(records, ctx, settings),
-    /Review and accept this older snapshot/
+    /must end 2027-10-26/
   )
   settings.priorSnapshotReview = true
-  const run = executeRelative(records, ctx, settings)
-  assert.equal(run.result.context.valuationDate, '2026-10-26')
-  assert.equal(run.result.marketSnapshotDate, '2026-10-22')
-  assert.equal(run.result.snapshotAgeDays, 4)
-  assert.equal(run.result.median.multiple, 10)
-  assert.equal(run.result.median.valuePerShare, 8.2)
-  assert.ok(run.input.peers.every((p) => p.valuationDate === '2026-10-22'))
-  assert.match(
-    run.result.warnings.join(' '),
-    /not been refreshed or rolled forward/
+  assert.throws(
+    () => executeRelative(records, ctx, settings),
+    /must end 2027-10-26/
   )
 })
 
@@ -156,7 +162,7 @@ test('new uploads update the latest snapshot, target link, median and NTM horizo
   assert.ok(run.audit.every((r) => r.source.asOf === '2026-10-26'))
 })
 
-test('historical as-of valuations exclude later uploads and allow deliberate selection of an older cohort', () => {
+test('historical as-of valuations exclude later uploads and pinning an older cohort cannot bypass the required NTM window', () => {
   const records = [
     ...snapshot('2026-10-22'),
     ...snapshot('2026-10-26', 12, 1800)
@@ -171,10 +177,10 @@ test('historical as-of valuations exclude later uploads and allow deliberate sel
     settings = settingsFor(records, ctx)
   settings.relativeSnapshot = '2026-10-22'
   settings.priorSnapshotReview = true
-  const pinned = executeRelative(records, ctx, settings)
-  assert.equal(pinned.result.targetMetric, 100)
-  assert.equal(pinned.result.median.multiple, 10)
-  assert.equal(pinned.result.marketSnapshotDate, '2026-10-22')
+  assert.throws(
+    () => executeRelative(records, ctx, settings),
+    /must end 2027-10-26/
+  )
 })
 
 test('future or unavailable snapshots cannot be selected, and partial new cohorts do not mix market dates', () => {
@@ -206,7 +212,7 @@ test('future or unavailable snapshots cannot be selected, and partial new cohort
 })
 
 test('the engine requires an explicit prior-snapshot acceptance and rejects forged or future market dates', () => {
-  const records = snapshot('2026-10-22'),
+  const records = snapshot('2026-10-22', 10, 1000, 10, '2026-10-26'),
     ctx = context('2026-10-26'),
     settings = settingsFor(records, ctx)
   settings.priorSnapshotReview = true
@@ -233,6 +239,109 @@ test('the engine requires an explicit prior-snapshot acceptance and rejects forg
     () => calculateRelativeValuation(forged),
     /source does not match/
   )
+})
+
+test('direct engine calls and Excel exports reject an old NTM result after the valuation date advances', () => {
+  const input = snapshot('2026-10-22'),
+    originalContext = context('2026-10-22'),
+    originalSettings = settingsFor(input, originalContext),
+    oldRun = executeRelative(input, originalContext, originalSettings),
+    today = context('2026-10-26')
+  assert.throws(
+    () =>
+      calculateRelativeValuation({
+        ...oldRun.input,
+        context: {
+          ...oldRun.input.context,
+          valuationDate: today.valuationDate
+        },
+        priorSnapshotAccepted: true
+      }),
+    /must end 2027-10-26/
+  )
+  assert.throws(
+    () =>
+      buildValuationWorkbook({
+        records: input,
+        context: today,
+        settings: originalSettings,
+        relative: oldRun
+      }),
+    /NTM export requires forecasts ending 2027-10-26/
+  )
+})
+
+test('daily rollover advances the requested window even when the saved selection and source data are unchanged', () => {
+  const input = snapshot('2026-10-26'),
+    tomorrow = context('2026-10-27'),
+    model = prepareModel(input, tomorrow),
+    preview = peerPreview(model, 'EV/EBITDA', 'NTM:2027-10-26')
+  assert.equal(preview.periodKey, 'NTM:2027-10-27')
+  assert.equal(preview.periodLabel, 'NTM estimate · 2026-10-27 to 2027-10-27')
+  assert.equal(preview.target, undefined)
+  assert.deepEqual(preview.ntmAlignment.sourceEndDates, ['2027-10-26'])
+  const settings = settingsFor(input, tomorrow)
+  settings.priorSnapshotReview = true
+  assert.throws(
+    () => executeRelative(input, tomorrow, settings),
+    /must end 2027-10-27/
+  )
+})
+
+test('a changed company uses its own aligned target data and cannot inherit the previous target EBITDA', () => {
+  const oldInputs = snapshot('2026-10-26'),
+    changed = {
+      ...context('2026-10-26'),
+      company: 'Different synthetic issuer',
+      issuerId: 'NEW'
+    },
+    missing = peerPreview(prepareModel(oldInputs, changed), 'EV/EBITDA')
+  assert.equal(missing.target, undefined)
+  const nextInputs = [
+    ...oldInputs,
+    record('NEW', 'evEbitdaForward', 12, '2026-10-26', 'NTM', '2027-10-26'),
+    record('NEW', 'enterpriseValue', 3600, '2026-10-26', 'instant'),
+    record('NEW', 'basicShares', 100, '2026-10-26', 'instant'),
+    record('NEW', 'price', 36, '2026-10-26', 'instant')
+  ]
+  const run = executeRelative(
+    nextInputs,
+    changed,
+    settingsFor(nextInputs, changed)
+  )
+  assert.equal(run.result.context.issuerId, 'NEW')
+  assert.equal(run.result.targetMetric, 300)
+  assert.equal(run.result.period.endDate, '2027-10-26')
+})
+
+test('a leap-day NTM window is checked against the clamped anniversary in both preview and engine', () => {
+  const input = snapshot('2024-02-29'),
+    ctx = context('2024-02-29'),
+    preview = peerPreview(prepareModel(input, ctx), 'EV/EBITDA'),
+    run = executeRelative(input, ctx, settingsFor(input, ctx))
+  assert.equal(preview.ntmAlignment.requiredEndDate, '2025-02-28')
+  assert.equal(run.result.period.endDate, '2025-02-28')
+})
+
+test('explicit FY and CY selections remain available while a stale NTM window waits for refreshed data', () => {
+  for (const basis of ['FY', 'CY']) {
+    const input = [
+        ...snapshot('2026-10-22'),
+        ...['DEMO', 'NYSE:PEER1', 'NYSE:PEER2', 'NYSE:PEER3'].map((id) =>
+          record(id, 'ebitda', 100, '2026-10-22', basis, '2027-12-31')
+        ),
+        ...['NYSE:PEER1', 'NYSE:PEER2', 'NYSE:PEER3'].map((id) =>
+          record(id, 'enterpriseValue', 1000, '2026-10-22', 'instant')
+        )
+      ],
+      ctx = context('2026-10-26'),
+      settings = settingsFor(input, ctx)
+    settings.relativePeriod = basis + ':2027-12-31'
+    settings.priorSnapshotReview = true
+    const run = executeRelative(input, ctx, settings)
+    assert.equal(run.result.period.basis, basis)
+    assert.equal(run.result.period.endDate, '2027-12-31')
+  }
 })
 
 test('NTM labels and periods cannot be silently replaced by FY or trailing inputs', () => {
@@ -352,7 +461,7 @@ test('refreshing source data updates automatic defaults, retains explicit overri
 })
 
 test('the Excel model preserves the actual market date, as-of valuation date, older-data disclosure and original source formulas', () => {
-  const records = snapshot('2026-10-22'),
+  const records = snapshot('2026-10-22', 10, 1000, 10, '2026-10-26'),
     ctx = context('2026-10-26'),
     settings = settingsFor(records, ctx)
   settings.priorSnapshotReview = true
@@ -369,7 +478,7 @@ test('the Excel model preserves the actual market date, as-of valuation date, ol
   const serial = (date) =>
     (Date.parse(date) - Date.UTC(1899, 11, 30)) / 86400000
   assert.equal(cell('G6').value, serial('2026-10-22'))
-  assert.equal(cell('H6').value, serial('2027-10-22'))
+  assert.equal(cell('H6').value, serial('2027-10-26'))
   assert.match(cell('F6').formula, /^'Sources'!/)
   assert.equal(cell('F6').value, 8)
   assert.match(

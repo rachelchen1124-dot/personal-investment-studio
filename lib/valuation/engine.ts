@@ -1,4 +1,5 @@
 import { fiscalDcfPeriods } from './fiscal-periods.ts'
+import { ntmPeriodEnd } from './forward-period.ts'
 
 /** Deterministic valuation tools. Input references are retained, not authenticated. */
 export type Source = {
@@ -651,6 +652,11 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
       ? null
       : readCapitalization(input.capitalization as Capitalization, read)
   validatePeriod(input.period, input.context.valuationDate, 'target period')
+  if (input.period.basis === 'NTM')
+    requireInput(
+      input.period.endDate === ntmPeriodEnd(input.context.valuationDate),
+      `NTM for valuation ${input.context.valuationDate} must end ${ntmPeriodEnd(input.context.valuationDate)}. The supplied earnings window ends ${input.period.endDate}; supply aligned target and peer forecasts before calculating.`
+    )
   const targetMetric = read(input.targetMetric, 'targetMetric')
   requireInput(
     targetMetric > 0,
@@ -849,7 +855,7 @@ export function calculateRelativeValuation(input: RelativeValuationInput) {
       ...details.warnings,
       ...(input.marketDataMode === 'current-prices'
         ? [
-            'Market prices and EV multiples refresh automatically. Shares, net debt and earnings forecasts are held at their uploaded source vintages; the uploaded NTM horizon is not a newly refreshed consensus estimate. Quote timestamps and original inputs are retained.'
+            'Market prices and EV multiples refresh automatically. NTM earnings must cover the twelve months from the valuation date. Shares, net debt and forecasts retain their documented source vintages; a price refresh does not create new consensus estimates. Quote timestamps and original inputs are retained.'
           ]
         : snapshotAgeDays
           ? [

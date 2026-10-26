@@ -44,6 +44,11 @@ target/peer regular-session quotes from Yahoo Finance on load, every 15 seconds
 while visible, and on return. EV and forward multiples reprice from the original
 uploaded shares, EV base and EBITDA estimates; quote timestamps and financial
 vintages remain separate. Reviewed relative valuations recalculate as quotes change.
+NTM selection now follows the valuation date's twelve-month anniversary. Old
+forecast windows remain visible as reference data and cannot produce a current
+NTM result. The UI identifies missing matching target/peer estimates and links
+back to Peer Data uploads. Both the engine and Excel export reject stale NTM
+windows; fresh aligned exports restore calculation without relabeling old inputs.
 The uploaded/historical mode remains available, with a direct action to enable
 today's date and current quotes together. Quote age, regular-session status and
 the last successful connection check are visible. Checks pause off-screen/offline

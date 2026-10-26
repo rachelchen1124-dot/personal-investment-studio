@@ -1586,6 +1586,7 @@ export function ValuationDataIntake() {
           onSettingsChange={rememberModelSettings}
           context={{ company, issuerId, valuationDate, mode, autoDate }}
           onReview={() => setStage('review')}
+          onUpdatePeerData={() => setStage('upload')}
           onUseCurrentMarket={() => {
             setAutoDate(true)
             setValuationDate(localToday())

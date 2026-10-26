@@ -1,6 +1,6 @@
 import { validDate } from './manual-intake.mjs'
 
-/** Rolling twelve-month horizon from the multiple's market snapshot, not FY end. */
+/** Twelve-month anniversary; use the valuation date for requested NTM and the source date only for undated upload metadata. */
 export function ntmPeriodEnd(asOf: string) {
   if (!validDate(asOf)) return ''
   const [year, month, day] = asOf.split('-').map(Number) as [

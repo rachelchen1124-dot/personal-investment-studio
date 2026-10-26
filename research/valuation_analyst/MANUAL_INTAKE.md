@@ -129,6 +129,17 @@ peers while preserving manually written comparability notes.
 
 ### Automatic daily market valuation
 
+NTM period selection is anchored to the valuation date. A valuation dated
+2026-10-26 requires NTM ending 2027-10-26 for both the target and selected peers.
+Changing the date or refreshing stock prices does not relabel older forecasts.
+An older source window remains visible as reference data, while the selected
+period advances and explains which matching inputs must be uploaded. The engine
+blocks mismatched NTM results, including attempts to accept an older market
+snapshot or reuse a saved period selection. Excel rejects a prior NTM result
+whose period no longer matches its valuation date. Fresh matching uploads
+restore calculation automatically; explicit FY/CY selections and fiscal-year
+DCF forecasts retain their own periods. No NTM interpolation is invented.
+
 The browser defaults to **Today · updates automatically** and **Automatic
 market-price updates**. The valuation date advances at local midnight and when
 returning to the page. Target and peer prices are fetched on opening, every 15
