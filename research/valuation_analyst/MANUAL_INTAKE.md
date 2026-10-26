@@ -131,8 +131,10 @@ peers while preserving manually written comparability notes.
 
 The browser defaults to **Today · updates automatically** and **Automatic
 market-price updates**. The valuation date advances at local midnight and when
-returning to the page. Target and peer prices are fetched on opening, every five
-minutes while visible, and on return; Refresh market prices also requests an update.
+returning to the page. Target and peer prices are fetched on opening, every 15
+seconds while visible and online, and on return/reconnection; Refresh market prices
+also requests an update. Historical views offer **Use live Yahoo prices and today’s
+date**, which enables automatic date mode while preserving numeric inputs.
 Only US stock identifiers and the oldest needed market-base date are sent to the
 quote endpoint. Uploaded financial amounts and spreadsheets stay in the browser.
 
@@ -141,6 +143,15 @@ market timestamp, security identity, exchange and currency. Quotes may be delaye
 It retains the last genuine trading date over weekends/holidays, bounds request
 size and concurrency, and rejects missing, stale, future or invalid prices. Failed
 quotes stay unavailable; uploaded prices are never silently presented as current.
+The screen distinguishes quote/trade age from the last successful feed check and
+shows the regular market session when the provider supplies its boundaries. It
+does not infer an exchange delay when Yahoo omits it. A total connection failure
+retains only the previous successful quotes, with their original timestamps and an
+explicit failure/staleness notice. Retry intervals back off from 30 to 120 seconds;
+hidden/offline pages pause and immediately retry on return. Server responses are
+uncached at HTTP level, with a 10-second in-process quote cache, per-symbol in-flight
+deduplication and bounded provider 429 cooldown. This is best-effort polling of the
+public Yahoo feed, not a guaranteed zero-delay exchange streaming service.
 
 EV at the latest share price = uploaded EV + uploaded basic shares × (latest
 price − uploaded price). Shares and EV-to-equity adjustments are held at the upload

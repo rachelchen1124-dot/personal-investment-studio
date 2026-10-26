@@ -7,7 +7,7 @@ import {
   type Upload,
   validDate
 } from '@/lib/valuation/manual-intake.mjs'
-import { localToday } from '@/lib/valuation/market-prices'
+import { localToday, quoteSession } from '@/lib/valuation/market-prices'
 import {
   applyPeerResearch,
   peerResearchIds,
@@ -31,6 +31,8 @@ import {
   sameIssuer
 } from '@/lib/valuation/workflow'
 import styles from '@/styles/ValuationIntake.module.css'
+
+import { MarketPriceStatus } from './MarketPriceStatus'
 
 const format = (value: number | null | undefined, digits = 2) =>
   value === undefined || value === null
@@ -93,6 +95,7 @@ export function ValuationModelRunner({
   records: rawRecords,
   context,
   onReview,
+  onUseCurrentMarket,
   files,
   initialRunSettings,
   onSettingsChange
@@ -100,6 +103,7 @@ export function ValuationModelRunner({
   records: NormalizedManual[]
   context: IntakeContext
   onReview: () => void
+  onUseCurrentMarket: () => void
   files?: Upload[]
   initialRunSettings?: RunSettings
   onSettingsChange?: (settings: RunSettings) => void
@@ -277,6 +281,13 @@ export function ValuationModelRunner({
   }, [currentFeedback])
   const set = <K extends keyof RunSettings>(key: K, value: RunSettings[K]) => {
     setSettings((current) => ({ ...current, [key]: value }))
+    setFeedback(null)
+  }
+  const useCurrentMarket = () => {
+    const next = { ...settings, marketDataMode: 'current' as const }
+    setSettings(next)
+    onSettingsChange?.(next)
+    onUseCurrentMarket()
     setFeedback(null)
   }
   const [autoMessage, setAutoMessage] = React.useState('')
@@ -1013,9 +1024,10 @@ export function ValuationModelRunner({
       <label>
         Market inputs
         <select
-          value={settings.marketDataMode || 'current'}
+          value={currentMarket ? 'current' : 'uploaded'}
           onChange={(event) => {
-            set('marketDataMode', event.target.value as 'current' | 'uploaded')
+            if (event.target.value === 'current') useCurrentMarket()
+            else set('marketDataMode', 'uploaded')
           }}
         >
           <option value='current'>Automatic market-price updates</option>
@@ -1024,6 +1036,14 @@ export function ValuationModelRunner({
           </option>
         </select>
       </label>
+      {context.mode === 'dcf' && currentMarket ? (
+        <section
+          className={styles.status}
+          aria-label='Automatic market updates'
+        >
+          <MarketPriceStatus {...marketPrices} issuerId={context.issuerId} />
+        </section>
+      ) : null}
       <p className={styles.caption}>
         Reported debt, cash and book NCI are proposed where available. Review
         leases, nonoperating investments, restricted cash and the market value
@@ -1300,46 +1320,15 @@ export function ValuationModelRunner({
               <strong>
                 Current market valuation · {context.valuationDate}
               </strong>
-              <p role='status'>
-                {marketPrices.loading
-                  ? 'Refreshing target and peer market prices…'
-                  : marketPrices.batch?.quotes.length
-                    ? `Latest prices: ${marketPrices.batch.quotes.length} securities · checked ${marketPrices.batch.retrievedAt}.`
-                    : 'Waiting for current market prices.'}
-              </p>
-              {marketPrices.error ? (
-                <p role='alert'>{marketPrices.error}</p>
-              ) : null}
-              <p>
-                Prices refresh on opening this page, every five minutes while
-                visible, and when you return. The valuation date advances daily.
-                Latest available quotes may be delayed; each peer shows its
-                actual quote timestamp.
-              </p>
+              <MarketPriceStatus
+                {...marketPrices}
+                issuerId={context.issuerId}
+              />
               <p>
                 EV and multiples update with share prices. Uploaded shares, net
                 debt and EBITDA estimates remain the financial assumptions;
                 their source vintages are shown separately.
               </p>
-              {model.capital.price?.marketRefresh ? (
-                <p>
-                  <strong>
-                    {context.issuerId} price: {model.capital.price.currency}{' '}
-                    {format(model.capital.price.value)}
-                  </strong>{' '}
-                  · quote {model.capital.price.marketRefresh.quoteAsOf}
-                </p>
-              ) : null}
-              <button
-                type='button'
-                className={styles.secondary}
-                disabled={marketPrices.loading}
-                onClick={() => void marketPrices.refresh()}
-              >
-                {marketPrices.loading
-                  ? 'Refreshing prices…'
-                  : 'Refresh market prices'}
-              </button>
               <label className={styles.confirm}>
                 <input
                   type='checkbox'
@@ -1359,6 +1348,13 @@ export function ValuationModelRunner({
               aria-label='Relative valuation dates'
             >
               <strong>Valuation as of {context.valuationDate}</strong>
+              <p>
+                This view uses uploaded market data for the selected date.
+                Switch to Yahoo Finance for automatically refreshed prices.
+              </p>
+              <button type='button' onClick={useCurrentMarket}>
+                Use live Yahoo prices and today’s date
+              </button>
               <label>
                 Market data snapshot
                 <select
@@ -1695,6 +1691,9 @@ export function ValuationModelRunner({
                 {preview.peers.map((peer) => {
                   const selection = settings.peerSelections[peer.issuerId]
                   const research = selection?.research
+                  const marketQuote = priceUpdate.quotes.find((quote) =>
+                    sameIssuer(quote.issuerId, peer.issuerId)
+                  )
                   return (
                     <tr key={peer.issuerId}>
                       <td>
@@ -1733,18 +1732,9 @@ export function ValuationModelRunner({
                             </small>
                             {peer.suppliedMultiple.marketRefresh ? (
                               <small>
-                                Price{' '}
-                                {
-                                  priceUpdate.quotes.find((quote) =>
-                                    sameIssuer(quote.issuerId, peer.issuerId)
-                                  )?.currency
-                                }{' '}
-                                {format(
-                                  priceUpdate.quotes.find((quote) =>
-                                    sameIssuer(quote.issuerId, peer.issuerId)
-                                  )?.price
-                                )}{' '}
-                                · EV {format(peer.numerator?.value)}m
+                                Price {marketQuote?.currency}{' '}
+                                {format(marketQuote?.price)} · EV{' '}
+                                {format(peer.numerator?.value)}m
                               </small>
                             ) : null}
                           </span>
@@ -1782,15 +1772,20 @@ export function ValuationModelRunner({
                             : ''}
                         </small>
                         {currentMarket ? (
-                          <small>
-                            Quote:{' '}
-                            {(peer.suppliedMultiple || peer.numerator)
-                              ?.marketRefresh?.quoteAsOf ||
-                              priceUpdate.quotes.find((quote) =>
-                                sameIssuer(quote.issuerId, peer.issuerId)
-                              )?.asOf ||
-                              'Unavailable'}
-                          </small>
+                          <>
+                            <small>
+                              Quote:{' '}
+                              {(peer.suppliedMultiple || peer.numerator)
+                                ?.marketRefresh?.quoteAsOf ||
+                                marketQuote?.asOf ||
+                                'Unavailable'}
+                            </small>
+                            {marketQuote ? (
+                              <small>
+                                {quoteSession(marketQuote, Date.now())}
+                              </small>
+                            ) : null}
+                          </>
                         ) : null}
                         {currentMarket && priceUpdate.errors[peer.issuerId] ? (
                           <small>{priceUpdate.errors[peer.issuerId]}</small>

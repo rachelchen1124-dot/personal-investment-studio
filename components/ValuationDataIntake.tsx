@@ -1586,6 +1586,10 @@ export function ValuationDataIntake() {
           onSettingsChange={rememberModelSettings}
           context={{ company, issuerId, valuationDate, mode, autoDate }}
           onReview={() => setStage('review')}
+          onUseCurrentMarket={() => {
+            setAutoDate(true)
+            setValuationDate(localToday())
+          }}
         />
       </div>
       <p className={styles.privacy}>

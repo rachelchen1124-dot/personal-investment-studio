@@ -1,5 +1,6 @@
 import { validDate } from './manual-intake.mjs'
 import {
+  MARKET_PRICE_CACHE_MS,
   type MarketPriceBatch,
   type MarketQuote,
   priceSymbol
@@ -18,6 +19,11 @@ type YahooChart = {
             exchangeTimezoneName?: string
             regularMarketTime?: number
             regularMarketPrice?: number
+            fullExchangeName?: string
+            exchangeDataDelayedBy?: number
+            currentTradingPeriod?: {
+              regular?: { start?: number; end?: number }
+            }
           }
           events?: { splits?: Record<string, { date?: number }> }
         }[]
@@ -83,6 +89,19 @@ export function parseMarketQuote(
   const splitDates = Object.values(row?.events?.splits || {})
     .map((split) => tradingDate(split.date || 0, zone))
     .filter((date) => date > since && date <= tradingDate(time, zone))
+  const regular = meta.currentTradingPeriod?.regular
+  const session =
+    typeof regular?.start === 'number' &&
+    typeof regular.end === 'number' &&
+    Number.isFinite(regular.start) &&
+    Number.isFinite(regular.end) &&
+    regular.end > regular.start &&
+    regular.end - regular.start <= 86_400
+      ? {
+          start: new Date(regular.start * 1000).toISOString(),
+          end: new Date(regular.end * 1000).toISOString()
+        }
+      : undefined
   return {
     issuerId,
     symbol,
@@ -92,7 +111,14 @@ export function parseMarketQuote(
     asOf: new Date(time * 1000).toISOString(),
     retrievedAt: now.toISOString(),
     sourceUrl: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/`,
-    splitDates
+    splitDates,
+    exchange: meta.fullExchangeName || meta.exchangeName,
+    regularSession: session,
+    ...(typeof meta.exchangeDataDelayedBy === 'number' &&
+    Number.isFinite(meta.exchangeDataDelayedBy) &&
+    meta.exchangeDataDelayedBy >= 0
+      ? { delayMinutes: meta.exchangeDataDelayedBy }
+      : {})
   }
 }
 
@@ -123,6 +149,8 @@ export function validatePriceRequest(
 }
 
 const cache = new Map<string, { until: number; quote: MarketQuote }>()
+const inFlight = new Map<string, Promise<MarketQuote>>()
+let rateLimitedUntil = 0
 export async function fetchMarketPrices(
   ids: string[],
   since: string,
@@ -134,6 +162,58 @@ export async function fetchMarketPrices(
   const quotes: MarketQuote[] = [],
     errors: MarketPriceBatch['errors'] = []
   const queue = [...new Set(ids)]
+  async function load(issuerId: string, key: string) {
+    if (!options.fetch && rateLimitedUntil > now.getTime())
+      throw new Error(
+        'Yahoo Finance is temporarily rate limited. Automatic checks will retry with backoff.'
+      )
+    const url = new URL(
+      'https://query1.finance.yahoo.com/v8/finance/chart/' +
+        encodeURIComponent(priceSymbol(issuerId))
+    )
+    url.search = new URLSearchParams({
+      period1: String(Math.floor((Date.parse(since) - 7 * 86_400_000) / 1000)),
+      period2: String(Math.floor(now.getTime() / 1000) + 60),
+      interval: '1d',
+      events: 'splits'
+    }).toString()
+    const response = await fetcher(url, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(9000),
+      headers: { Accept: 'application/json' }
+    })
+    if (response.status === 429 && !options.fetch) {
+      const retryAfter = response.headers.get('retry-after')
+      const seconds = retryAfter ? Number(retryAfter) : Number.NaN
+      const delay = Number.isFinite(seconds)
+        ? seconds * 1000
+        : retryAfter
+          ? Date.parse(retryAfter) - now.getTime()
+          : 60_000
+      rateLimitedUntil =
+        now.getTime() +
+        Math.max(
+          60_000,
+          Math.min(Number.isFinite(delay) ? delay : 60_000, 300_000)
+        )
+    }
+    if (!response.ok)
+      throw new Error(
+        `Price provider returned ${response.status}. Retry the refresh later.`
+      )
+    const body = await response.text()
+    if (body.length > 1_000_000)
+      throw new Error('The quote response exceeded the supported size.')
+    const quote = parseMarketQuote(JSON.parse(body), issuerId, since, now)
+    if (!options.fetch) {
+      if (cache.size >= 400) cache.delete(cache.keys().next().value!)
+      cache.set(key, {
+        until: now.getTime() + MARKET_PRICE_CACHE_MS,
+        quote
+      })
+    }
+    return quote
+  }
   async function worker() {
     while (queue.length) {
       const issuerId = queue.shift()!,
@@ -144,34 +224,17 @@ export async function fetchMarketPrices(
           quotes.push(cached.quote)
           continue
         }
-        const url = new URL(
-          'https://query1.finance.yahoo.com/v8/finance/chart/' +
-            encodeURIComponent(priceSymbol(issuerId))
-        )
-        url.search = new URLSearchParams({
-          period1: String(
-            Math.floor((Date.parse(since) - 7 * 86_400_000) / 1000)
-          ),
-          period2: String(Math.floor(now.getTime() / 1000) + 60),
-          interval: '1d',
-          events: 'splits'
-        }).toString()
-        const response = await fetcher(url, {
-          signal: AbortSignal.timeout(9000),
-          headers: { Accept: 'application/json' }
-        })
-        if (!response.ok)
-          throw new Error(
-            `Price provider returned ${response.status}. Retry the refresh later.`
-          )
-        const body = await response.text()
-        if (body.length > 1_000_000)
-          throw new Error('The quote response exceeded the supported size.')
-        const quote = parseMarketQuote(JSON.parse(body), issuerId, since, now)
-        quotes.push(quote)
-        if (!options.fetch) {
-          if (cache.size >= 400) cache.delete(cache.keys().next().value!)
-          cache.set(key, { until: now.getTime() + 60_000, quote })
+        const pending = !options.fetch && inFlight.get(key)
+        if (pending) {
+          quotes.push(await pending)
+          continue
+        }
+        const promise = load(issuerId, key)
+        if (!options.fetch) inFlight.set(key, promise)
+        try {
+          quotes.push(await promise)
+        } finally {
+          if (inFlight.get(key) === promise) inFlight.delete(key)
         }
       } catch (err) {
         errors.push({
