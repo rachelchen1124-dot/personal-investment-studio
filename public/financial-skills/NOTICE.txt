@@ -1,0 +1,21 @@
+Financial Skills in Rachel's Investment Studio
+
+Original workflows and reference materials: Anthropic and contributors.
+Source: https://github.com/anthropics/financial-services
+Upstream revision: 574ed3624aebd0418c7e96cd101262f30210ab26
+License: Apache License, Version 2.0 (see LICENSE.txt).
+
+The original workflow instructions and bundled reference files are reproduced
+without edits inside each workflow JSON. The catalog descriptions, browser UI
+and research brief adapter were added for Investment Studio.
+
+Scope: 18 core financial-analysis and equity-research workflows.
+This is a browser-based workflow and prompt workbench. It is not a deployment
+of Claude Managed Agents or a connection to a financial data provider. It does
+not execute scripts, run models, produce analyst reports or generate workbooks.
+Those operations take place in the Claude session where a brief is run, subject
+to the tools, subscriptions and data available in that session.
+
+The research context entered in the workbench stays in the current browser tab
+until the user copies or downloads it. Required workbooks and source documents
+are attached separately in the destination session.
