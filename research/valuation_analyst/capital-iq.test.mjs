@@ -5,6 +5,7 @@ import { proposeImport, restoreIntake } from '../../lib/valuation/capital-iq.ts'
 import { normalizeManual } from '../../lib/valuation/manual-intake.mjs'
 import { buildValuationWorkbook } from '../../lib/valuation/excel-model.ts'
 import { calculateDcf } from '../../lib/valuation/engine.ts'
+import { buildManualWacc } from '../../lib/valuation/wacc-build.ts'
 import {
   workbookEntries,
   writeValuationXlsx
@@ -282,7 +283,7 @@ test('forecast defaults fill blank table cells, preserve manual entries and neve
   )
 })
 
-test('linked Excel forecasts, bridge and nine sensitivity cells reconcile to the valuation engine', () => {
+test('linked Excel forecasts, bridge and 25 formula sensitivity cells reconcile to the valuation engine', () => {
   const records = mapped(),
     settings = settingsFor(records)
   settings.wacc = '8.8'
@@ -315,8 +316,8 @@ test('linked Excel forecasts, bridge and nine sensitivity cells reconcile to the
     close(cell(col + '34').value, year.pvFcff)
     assert.ok(cell(col + '30').formula.includes(col + '29'))
   })
-  for (let row = 73; row <= 75; row++)
-    for (let column = 5; column <= 7; column++) {
+  for (let row = 73; row <= 77; row++)
+    for (let column = 5; column <= 9; column++) {
       const col = String.fromCharCode(65 + column)
       const result = calculateDcf({
         ...dcf.input,
@@ -327,12 +328,13 @@ test('linked Excel forecasts, bridge and nine sensitivity cells reconcile to the
         }
       })
       close(cell(col + row).value, result.valuePerShare)
+      assert.match(cell(col + row).formula, /^IF\(AND\(COUNT\(/)
+      assert.ok(cell(col + row).formula.includes(')=10,'))
     }
   const xml = workbookEntries(workbook)
-  assert.match(
-    xml['xl/worksheets/sheet2.xml'],
-    /t="dataTable" ref="F73:H75" dt2D="1" r1="E8" r2="E7"/
-  )
+  assert.doesNotMatch(xml['xl/worksheets/sheet2.xml'], /t="dataTable"/)
+  close(cell('H75').value, dcf.result.valuePerShare)
+  assert.equal(cell('H75').style, 'totalPrice')
   assert.match(xml['xl/workbook.xml'], /calcMode="auto"/)
   assert.ok(sheet.widths.slice(5, 8).every((width) => width >= 12))
   assert.match(
@@ -476,7 +478,7 @@ test('DCF runs from native statement uploads without peers or consensus; RV runs
   )
   assert.equal(dcf.result.forecast.length, 5)
   assert.equal(dcf.result.forecast[0].revenue, 483)
-  assert.equal(dcf.sensitivity.length, 3)
+  assert.equal(dcf.sensitivity.length, 5)
   assert.ok(Number.isFinite(dcf.result.valuePerShare))
   const settings = settingsFor(records)
   settings.wacc = ''
@@ -671,5 +673,42 @@ test('JSON restoration validates bounded source tables, rejects forged mappings 
   assert.throws(
     () => restoreIntake({ ...pack, files: Array(13).fill(files[0]) }),
     /intake JSON/
+  )
+})
+
+test('an applied manual WACC build exports linked CAPM formulas and its source assumptions', () => {
+  const records = mapped(),
+    settings = settingsFor(records)
+  settings.waccBuild = {
+    riskFreeRate: '4',
+    beta: '1.1',
+    equityRiskPremium: '5',
+    preTaxCostOfDebt: '6',
+    taxRate: '25',
+    equityValue: '2000',
+    debtValue: '200',
+    sourceAsOf: '2026-10-20',
+    sourceNote: 'Synthetic manual WACC sources and reviewed debt-value proxy.'
+  }
+  settings.wacc = (
+    buildManualWacc(settings.waccBuild, context.valuationDate).wacc * 100
+  ).toFixed(4)
+  const dcf = executeDcf(records, context, settings)
+  const book = buildValuationWorkbook({ records, context, settings, dcf })
+  const wacc = book.sheets.find((sheet) => sheet.name === 'WACC')
+  const cell = (address) => wacc.cells.find((cell) => cell.address === address)
+  assert.equal(cell('E14').formula, 'E5+E6*E7')
+  assert.equal(cell('E17').formula, 'E11/(E10+E11)')
+  assert.equal(
+    book.sheets
+      .find((sheet) => sheet.name === 'DCF')
+      .cells.find((cell) => cell.address === 'E7').formula,
+    "'WACC'!E20"
+  )
+  assert.equal(cell('E20').value, dcf.input.wacc.value)
+  assert.ok(
+    dcf.input.sources.some((source) =>
+      source.locator.includes('Synthetic manual WACC sources')
+    )
   )
 })

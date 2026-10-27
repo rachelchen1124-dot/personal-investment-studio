@@ -32,7 +32,9 @@ import {
 } from '@/lib/valuation/workflow'
 import styles from '@/styles/ValuationIntake.module.css'
 
+import { ManualWaccBuilder } from './ManualWaccBuilder'
 import { MarketPriceStatus } from './MarketPriceStatus'
+import { ValuationResultBridge } from './ValuationResultBridge'
 
 const format = (value: number | null | undefined, digits = 2) =>
   value === undefined || value === null
@@ -116,7 +118,7 @@ export function ValuationModelRunner({
   )
   const [settings, setSettings] = React.useState<RunSettings>(() => ({
     ...restoreRunSettings(baseModel, initialRunSettings),
-    marketDataMode: initialRunSettings?.marketDataMode || 'current',
+    marketDataMode: initialRunSettings?.marketDataMode || 'uploaded',
     autoRecalculate: initialRunSettings?.autoRecalculate ?? true
   }))
   const currentMarket =
@@ -1162,6 +1164,16 @@ export function ValuationModelRunner({
             Set the discount rate and terminal assumptions for this DCF. The
             terminal model requires reinvestment of growth / ROIC.
           </p>
+          <ManualWaccBuilder
+            value={settings.waccBuild}
+            valuationDate={context.valuationDate}
+            currency={settings.currency}
+            onChange={(value) => set('waccBuild', value)}
+            onApply={(wacc) => {
+              setSettings((current) => ({ ...current, wacc, dcfReview: false }))
+              setFeedback(null)
+            }}
+          />
           <button
             type='button'
             onClick={() =>
@@ -2284,6 +2296,10 @@ export function ValuationModelRunner({
                 {format(dcfRun.result.terminal.presentValue)}. Terminal share of
                 EV: {percent(dcfRun.result.terminalValueShare)}.
               </p>
+              <ValuationResultBridge
+                result={dcfRun.result}
+                currency={settings.currency}
+              />
               <div className={styles.tableWrap}>
                 <table className={styles.reviewTable}>
                   <caption>
@@ -2355,7 +2371,28 @@ export function ValuationModelRunner({
                       <tr key={row.wacc}>
                         <th scope='row'>{percent(row.wacc)}</th>
                         {row.cells.map((cell) => (
-                          <td key={cell.growth} title={cell.error || ''}>
+                          <td
+                            key={cell.growth}
+                            title={
+                              cell.error ||
+                              (Math.abs(row.wacc - dcfRun.input.wacc.value) <
+                                1e-9 &&
+                              Math.abs(
+                                cell.growth - dcfRun.input.terminalGrowth.value
+                              ) < 1e-9
+                                ? 'Base case: matches the DCF value per share'
+                                : '')
+                            }
+                            className={
+                              Math.abs(row.wacc - dcfRun.input.wacc.value) <
+                                1e-9 &&
+                              Math.abs(
+                                cell.growth - dcfRun.input.terminalGrowth.value
+                              ) < 1e-9
+                                ? styles.sensitivityBase
+                                : undefined
+                            }
+                          >
                             {cell.error
                               ? 'Invalid assumptions'
                               : format(cell.valuePerShare)}
@@ -2475,8 +2512,8 @@ export function ValuationModelRunner({
           <p className={styles.caption}>
             Includes editable assumptions, linked formulas, historical
             financials, source references and the results calculated above. The
-            DCF includes a native Excel sensitivity table. Recalculate Data
-            Tables in Excel after editing inputs.
+            DCF includes a 5 × 5 sensitivity grid with a formula in every valid
+            cell. The highlighted center matches the base-case value per share.
           </p>
           {exportError ? (
             <p className={styles.error} role='alert'>

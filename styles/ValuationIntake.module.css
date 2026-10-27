@@ -148,3 +148,16 @@
   .fileList { font-size: 11px; }
   .bottomActions { align-items: stretch; }
 }
+
+.waccBuilder { border: 1px solid #dbe4d5; background: #f8faf6; border-radius: 10px; padding: 18px; margin: 20px 0; }
+.waccBuilder > summary { color: #48653f; font-size: 13px; font-weight: 650; cursor: pointer; }
+.valuationBridge { border-top: 1px solid #e5e7df; padding-top: 18px; margin: 20px 0; }
+.bridgeLayout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(230px, 1fr); gap: 22px; }
+.bridgeTotal { font-weight: 700; background: #f0f4ea; }
+.bridgeDiagnostics { border: 1px solid #e0e6d9; border-radius: 9px; padding: 20px; background: #f8faf5; color: #6c7a5f; font-size: 12px; }
+.bridgeDiagnostics > span { display: block; font-size: 11px; }
+.bridgeDiagnostics > strong { display: block; color: #4c6540; font-size: 30px; letter-spacing: -.03em; margin: 9px 0; }
+.bridgeDiagnostics dl { display: grid; grid-template-columns: 1fr auto; gap: 10px 14px; font-size: 11px; margin: 20px 0; }
+.bridgeDiagnostics dd { margin: 0; text-align: right; font-weight: 600; }
+.reviewTable td.sensitivityBase { background: #dce8d0; color: #345027; font-weight: 750; outline: 2px solid #8ba875; outline-offset: -2px; }
+@media(max-width: 760px) { .bridgeLayout { grid-template-columns: minmax(0, 1fr); } }
