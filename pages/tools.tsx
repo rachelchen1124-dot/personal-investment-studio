@@ -53,7 +53,8 @@ export default function ToolsPage() {
             >
               <strong>📈 Macro Regime Dashboard</strong>
               <span>
-                Cross-market macro regimes, valuation, momentum and portfolio risk translated into transparent global ETF allocation signals.
+                Cross-market macro regimes, valuation, momentum and portfolio
+                risk translated into transparent global ETF allocation signals.
               </span>
             </a>
 
@@ -65,15 +66,17 @@ export default function ToolsPage() {
             >
               <strong>📑 Financial Quality Analyst</strong>
               <span>
-                AI-powered financial quality analysis using SEC filings, calculated indicators and historical financial trends.
+                AI-powered financial quality analysis using SEC filings,
+                calculated indicators and historical financial trends.
               </span>
             </a>
 
             <Link className={styles.simpleCard} href='/valuation-analyst'>
               <strong>🧮 Valuation Analyst</strong>
               <span>
-                Prepare DCF and relative valuation inputs with guided uploads for
-                historical financials, capital structure, peers and optional estimates.
+                Prepare DCF and relative valuation inputs with guided uploads
+                for historical financials, capital structure, peers and optional
+                estimates.
               </span>
             </Link>
 

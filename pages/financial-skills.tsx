@@ -12,10 +12,10 @@ import {
 import {
   filterFinancialSkills,
   financialSkillCategories,
+  type FinancialSkillCategory,
   financialSkills,
   financialSkillsSource,
-  findFinancialSkill,
-  type FinancialSkillCategory
+  findFinancialSkill
 } from '@/lib/financial-skills/catalog.mjs'
 import styles from '@/styles/FinancialSkills.module.css'
 import home from '@/styles/HomeSnapshot.module.css'
@@ -69,12 +69,10 @@ export default function FinancialSkillsPage() {
         }
         if (!controller.signal.aborted) setBundle(data)
       })
-      .catch((error: unknown) => {
+      .catch((err: unknown) => {
         if (!controller.signal.aborted) {
           setLoadError(
-            error instanceof Error
-              ? error.message
-              : 'Unable to load this workflow.'
+            err instanceof Error ? err.message : 'Unable to load this workflow.'
           )
         }
       })
@@ -121,10 +119,10 @@ export default function FinancialSkillsPage() {
       setFeedback(
         'Brief ready. Copy it or download the Markdown file, then add your source documents in Claude.'
       )
-    } catch (error: unknown) {
+    } catch (err: unknown) {
       setBrief('')
       setFormError(
-        error instanceof Error ? error.message : 'Unable to prepare the brief.'
+        err instanceof Error ? err.message : 'Unable to prepare the brief.'
       )
     }
   }
@@ -149,8 +147,10 @@ export default function FinancialSkillsPage() {
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = `${selectedId}-${asOf}.md`
+    document.body.append(anchor)
     anchor.click()
-    URL.revokeObjectURL(url)
+    anchor.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
     setFeedback(
       'Brief downloaded. Upload the Markdown file to Claude along with the required source documents.'
     )
@@ -397,7 +397,7 @@ export default function FinancialSkillsPage() {
               <textarea
                 id='source-notes'
                 rows={4}
-                maxLength={20000}
+                maxLength={20_000}
                 value={notes}
                 placeholder='Add source URLs, publication dates, known financials, assumptions or questions. Attach actual workbooks, filings and transcripts in Claude.'
                 onChange={(event) => {

@@ -61,7 +61,8 @@ function HomeSnapshot() {
         <section className={styles.hero}>
           <h1>Rachel&apos;s Investment Studio</h1>
           <p>
-            Independent investment research, portfolio analytics, and systematic strategy experiments.
+            Independent investment research, portfolio analytics, and systematic
+            strategy experiments.
           </p>
         </section>
 
@@ -74,7 +75,9 @@ function HomeSnapshot() {
           <div className={styles.rule} />
           <Link className={styles.simpleCard} href='/research'>
             <strong>Investment Research</strong>
-            <span>Company research, investment memos and fundamental analysis.</span>
+            <span>
+              Company research, investment memos and fundamental analysis.
+            </span>
           </Link>
         </section>
 
@@ -85,12 +88,16 @@ function HomeSnapshot() {
           </Link>
           <h2>Systematic Macro Strategies</h2>
           <div className={styles.rule} />
-          <Link className={styles.strategyCard} href='/trade-policy-transmission-alpha'>
+          <Link
+            className={styles.strategyCard}
+            href='/trade-policy-transmission-alpha'
+          >
             <span className={styles.strategyIcon}>🌐</span>
             <span>
               <strong>Trade Policy Transmission Alpha</strong>
               <p>
-                Systematic global macro strategy built from measurable U.S. trade-policy dispersion across countries.
+                Systematic global macro strategy built from measurable U.S.
+                trade-policy dispersion across countries.
               </p>
             </span>
             <span className={styles.open}>Open strategy →</span>
@@ -125,7 +132,8 @@ function HomeSnapshot() {
             >
               <strong>📈 Macro Regime Dashboard</strong>
               <span>
-                Cross-market macro regimes, valuation, momentum and portfolio risk translated into transparent global ETF allocation signals.
+                Cross-market macro regimes, valuation, momentum and portfolio
+                risk translated into transparent global ETF allocation signals.
               </span>
             </a>
             <a
@@ -136,15 +144,17 @@ function HomeSnapshot() {
             >
               <strong>📑 Financial Quality Analyst</strong>
               <span>
-                AI-powered financial quality analysis using SEC filings, calculated indicators and historical financial trends.
+                AI-powered financial quality analysis using SEC filings,
+                calculated indicators and historical financial trends.
               </span>
             </a>
 
             <Link className={styles.simpleCard} href='/valuation-analyst'>
               <strong>🧮 Valuation Analyst</strong>
               <span>
-                Prepare DCF and relative valuation inputs with guided uploads for
-                historical financials, capital structure, peers and optional estimates.
+                Prepare DCF and relative valuation inputs with guided uploads
+                for historical financials, capital structure, peers and optional
+                estimates.
               </span>
             </Link>
 
