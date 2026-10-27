@@ -1,5 +1,6 @@
 import { ntmPeriodEnd } from './forward-period.ts'
 import { fields, type NormalizedManual, type Upload } from './manual-intake.mjs'
+import { appliedWaccBuild } from './wacc-build.ts'
 import {
   type executeDcf,
   type executeRelative,
@@ -164,6 +165,12 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   const summary = sheet('Valuation')
   const dcfSheet =
     context.mode !== 'rv' && (dcf || !relative) ? sheet('DCF') : null
+  const waccBuild = appliedWaccBuild(
+    settings.waccBuild,
+    context.valuationDate,
+    settings.wacc
+  )
+  const waccSheet = dcfSheet && waccBuild ? sheet('WACC') : null
   const financials = sheet('Financials')
   const peers = relative
     ? sheet('Comps', [3, 3, 27, 19, 19, 16, 20, 20, 16, 65, 20, 20, 32])
@@ -178,11 +185,55 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   const sheets = [
     summary,
     ...(dcfSheet ? [dcfSheet] : []),
+    ...(waccSheet ? [waccSheet] : []),
     ...(peers ? [peers] : []),
     financials,
     ...(consensus ? [consensus] : []),
     sources
   ]
+  if (waccSheet && waccBuild && settings.waccBuild) {
+    const bw = writer(waccSheet)
+    bw.put('C2', 'Manual cost-of-capital build', 'title')
+    bw.put(
+      'C3',
+      'Rates are percentages. Financing values use the model currency in millions. Cash is excluded from financing weights.',
+      'note'
+    )
+    for (const [row, label, value, style] of [
+      [5, 'Risk-free rate', waccBuild.riskFreeRate, 'inputPercent'],
+      [6, 'Levered equity beta', waccBuild.beta, 'input'],
+      [7, 'Equity risk premium', waccBuild.equityRiskPremium, 'inputPercent'],
+      [8, 'Pre-tax debt cost', waccBuild.preTaxCostOfDebt, 'inputPercent'],
+      [9, 'Marginal tax rate', waccBuild.taxRate, 'inputPercent'],
+      [10, 'Common equity market value', waccBuild.equityValue, 'input'],
+      [11, 'Debt financing value', waccBuild.debtValue, 'input']
+    ] as [number, string, number, ExcelStyle][]) {
+      bw.put('C' + row, label)
+      bw.put('E' + row, value, style)
+    }
+    bw.put('C14', 'Cost of equity')
+    bw.formula('E14', 'E5+E6*E7', waccBuild.costOfEquity, 'percent')
+    bw.put('C15', 'After-tax debt cost')
+    bw.formula('E15', 'E8*(1-E9)', waccBuild.afterTaxCostOfDebt, 'percent')
+    bw.put('C16', 'Equity financing weight')
+    bw.formula('E16', 'E10/(E10+E11)', waccBuild.equityWeight, 'percent')
+    bw.put('C17', 'Debt financing weight')
+    bw.formula('E17', 'E11/(E10+E11)', waccBuild.debtWeight, 'percent')
+    bw.put('C20', 'WACC linked to DCF')
+    bw.formula(
+      'E20',
+      'ROUND(E14*E16+E15*E17,6)',
+      Number(settings.wacc) / 100,
+      'total'
+    )
+    bw.put('C22', 'Sources as of')
+    bw.put('E22', serial(settings.waccBuild.sourceAsOf), 'date')
+    for (const [index, line] of noteLines(
+      settings.waccBuild.sourceNote
+    ).entries())
+      bw.put('C' + (24 + index), line, 'note')
+    waccSheet.freezeRows = 4
+  }
   const sourceRows = new Map<NormalizedManual, number>()
   const sw = writer(sources)
   sw.put('C2', 'Source observations', 'title')
@@ -512,6 +563,13 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
       number(settings.wacc) === null ? null : Number(settings.wacc) / 100,
       'inputPercent'
     )
+    if (waccSheet)
+      w.formula(
+        'E7',
+        "'WACC'!E20",
+        Number(settings.wacc) / 100,
+        'linkedPercent'
+      )
     w.put('C8', 'Terminal growth')
     w.put(
       'E8',
@@ -866,14 +924,13 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
     )
     w.put(
       'C70',
-      'Native Excel What-If Data Table linked to E7 (WACC), E8 (growth) and E62 (value per share).',
+      'Every valid cell recalculates the full DCF. The highlighted center equals the base case; no Excel What-If Data Table is required.',
       'note'
     )
     w.put('C72', 'WACC / terminal growth', 'header')
     w.formula('E72', 'E62', w.get('E62'), 'hidden')
-    const growthOffsets =
-      typeof g === 'number' && g < 0.005 ? [0, 0.005, 0.01] : [-0.005, 0, 0.005]
-    const waccOffsets = [-0.01, 0, 0.01]
+    const growthOffsets = [-0.01, -0.005, 0, 0.005, 0.01]
+    const waccOffsets = [-0.02, -0.01, 0, 0.01, 0.02]
     for (const [index, offset] of growthOffsets.entries())
       w.calc(
         excelColumn(index + 5) + '72',
@@ -892,8 +949,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
         'percent'
       )
 
-    for (let r = 0; r < 3; r++)
-      for (let c = 0; c < 3; c++) {
+    for (let r = 0; r < 5; r++)
+      for (let c = 0; c < 5; c++) {
         const wc = w.get('E' + (r + 73)),
           gr = w.get(excelColumn(c + 5) + '72'),
           terminalNopat = w.get('E38'),
@@ -905,6 +962,8 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
           typeof roic === 'number' &&
           typeof terminalNopat === 'number' &&
           typeof shares === 'number' &&
+          wc > 0 &&
+          wc <= 1 &&
           wc > gr &&
           gr >= 0 &&
           roic > gr &&
@@ -934,9 +993,20 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
             shares
           if (!Number.isFinite(value)) value = 'n.a.'
         }
-        w.put(excelColumn(c + 5) + (r + 73), value, 'price')
+        const rowRate = `$E${r + 73}`
+        const columnGrowth = `${excelColumn(c + 5)}$72`
+        const cashFlows = Array.from({ length: 5 }, (_, index) => {
+          const col = excelColumn(index + 5)
+          return `${col}$35/(1+${rowRate})^${col}$32`
+        }).join('+')
+        const expression = `IF(AND(COUNT($E$9,$J$25,$E$51:$E$55,$E$60,${rowRate},${columnGrowth})=10,${rowRate}>0,${rowRate}<=1,${columnGrowth}>=0,${rowRate}>${columnGrowth},$E$9>${columnGrowth},$J$25>0,$E$60>0),(${cashFlows}+($J$25*(1+${columnGrowth})*(1-${columnGrowth}/$E$9))/(${rowRate}-${columnGrowth})/(1+${rowRate})^$J$32+$E$51+$E$52-$E$53-$E$54-$E$55)/$E$60,"n.a.")`
+        w.formula(
+          excelColumn(c + 5) + (r + 73),
+          expression,
+          value,
+          r === 2 && c === 2 ? 'totalPrice' : 'price'
+        )
       }
-    dcfSheet.dataTable = { range: 'E72:H75', rowInput: 'E8', columnInput: 'E7' }
     w.section(78, 'Model basis and analyst notes')
     w.put(
       'C79',
@@ -1423,7 +1493,7 @@ export function buildValuationWorkbook(input: ExcelModelInput): ExcelModel {
   for (const text of [
     'DCF input cells contain the rates and capital adjustments from the website. Blank required inputs display n.a.',
     'Cash-flow forecasts update from operating assumptions. WACC changes discounting; terminal growth and ROIC change terminal value.',
-    'Sensitivity uses a native two-variable Excel Data Table. Enable automatic calculation, including Data Tables, in Excel.',
+    'Sensitivity uses a formula-based 5 × 5 grid centered on the base case. Every valid cell recalculates forecast discounting, terminal value and the equity bridge.',
     'Financials and Sources retain mapped values and source-cell references. Selected forward Consensus earnings link to Comps; DCF assumptions remain separate.',
     'Historical statements and DCF cash flows are included. Detailed forecast balance sheets, debt schedules and NOL schedules require additional drivers.'
   ])

@@ -157,14 +157,6 @@ function HomeSnapshot() {
                 estimates.
               </span>
             </Link>
-
-            <Link className={styles.simpleCard} href='/financial-skills'>
-              <strong>📚 Financial Skills</strong>
-              <span>
-                Prepare research briefs with 18 modeling and equity-research
-                workflows, then run them in Claude with your source files.
-              </span>
-            </Link>
           </div>
         </section>
 

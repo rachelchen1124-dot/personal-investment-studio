@@ -15,6 +15,7 @@ import { fiscalDate, fiscalDcfPeriods } from './fiscal-periods.ts'
 import { ntmPeriodEnd } from './forward-period.ts'
 import { type NormalizedManual, validDate } from './manual-intake.mjs'
 import { relativeSnapshot } from './relative-snapshot.ts'
+import { type ManualWaccBuild, waccBuildNote } from './wacc-build.ts'
 
 export type IntakeContext = {
   company: string
@@ -53,6 +54,7 @@ export type RunSettings = {
   baseRevenue: string
   baseWorkingCapital: string
   wacc: string
+  waccBuild?: ManualWaccBuild
   terminalGrowth: string
   terminalRoic: string
   forecasts: ForecastRow[]
@@ -1063,7 +1065,7 @@ function shared(
     id: 'analyst:valuation-run',
     kind: 'analyst',
     asOf: context.valuationDate,
-    locator: `User-confirmed model inputs, equity bridge, dilution and review acknowledgements are recorded in this calculation input. ${settings.assumptionsNote.trim() ? 'Additional analyst note: ' + settings.assumptionsNote.trim() : 'No additional analyst note supplied.'}`
+    locator: `User-confirmed model inputs, equity bridge, dilution and review acknowledgements are recorded in this calculation input. ${settings.assumptionsNote.trim() ? 'Additional analyst note: ' + settings.assumptionsNote.trim() : 'No additional analyst note supplied.'} ${settings.waccBuild ? waccBuildNote(settings.waccBuild, context.valuationDate, settings.wacc) : ''}`
   }
   const sources = [
     ...new Map(
@@ -1208,8 +1210,8 @@ export function executeDcf(
     g = input.terminalGrowth.value
   const sensitivity = calculateDcfSensitivity(
     input,
-    [-0.01, 0, 0.01].map((delta) => wacc + delta),
-    [-0.005, 0, 0.005].map((delta) => g + delta)
+    [-0.02, -0.01, 0, 0.01, 0.02].map((delta) => wacc + delta),
+    [-0.01, -0.005, 0, 0.005, 0.01].map((delta) => g + delta)
   )
   return {
     input,

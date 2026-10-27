@@ -34,11 +34,11 @@ export default function ValuationAnalystPage() {
           <div className={styles.eyebrow}>VALUATION ANALYST</div>
           <h1>From your data to a valuation.</h1>
           <p>
-            Feed your Bloomberg, Capital IQ or FactSet exports into four clear
-            upload areas. Native Capital IQ layouts are mapped automatically;
-            other layouts use the guided templates. Review assumptions,
-            calculate DCF and relative valuation independently, and download the
-            results.
+            Upload your Bloomberg, Capital IQ, FactSet or manual data tables.
+            Review source periods and units, build your assumptions, and
+            calculate DCF or relative valuation directly in the Studio. Native
+            Capital IQ layouts are mapped automatically; other layouts use the
+            guided templates. No MCP or Claude session is required.
           </p>
         </section>
         <ValuationDataIntake />

@@ -306,7 +306,7 @@ test('unsupported rolling timing, missing fiscal dates and stale all-past horizo
   )
 })
 
-test('Excel FY dates, remaining cash flows, discount factors and nine sensitivity results reconcile to the engine', () => {
+test('Excel FY dates, remaining cash flows, discount factors and 25 sensitivity results reconcile to the engine', () => {
   const values = mapped(),
     model = prepareModel(values, context),
     settings = settingsFor(model),
@@ -333,8 +333,8 @@ test('Excel FY dates, remaining cash flows, discount factors and nine sensitivit
     close(cell(col + '34').value, row.pvFcff)
   }
   close(cell('E62').value, dcf.result.valuePerShare)
-  for (let r = 0; r < 3; r++)
-    for (let c = 0; c < 3; c++)
+  for (let r = 0; r < 5; r++)
+    for (let c = 0; c < 5; c++)
       close(
         cell(String.fromCharCode(70 + c) + (73 + r)).value,
         dcf.sensitivity[r].cells[c].valuePerShare
