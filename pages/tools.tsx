@@ -13,7 +13,7 @@ export default function ToolsPage() {
         <title>Tools | Rachel&apos;s Investment Studio</title>
         <meta
           name='description'
-          content='Investment research and market analysis tools, including the Macro Regime Dashboard, Financial Quality Analyst and Valuation Analyst.'
+          content='Investment research and market analysis tools, including the Macro Regime Dashboard, Financial Quality Analyst, Valuation Analyst and Financial Skills workbench.'
         />
       </Head>
 
@@ -53,7 +53,8 @@ export default function ToolsPage() {
             >
               <strong>📈 Macro Regime Dashboard</strong>
               <span>
-                Cross-market macro regimes, valuation, momentum and portfolio risk translated into transparent global ETF allocation signals.
+                Cross-market macro regimes, valuation, momentum and portfolio
+                risk translated into transparent global ETF allocation signals.
               </span>
             </a>
 
@@ -65,15 +66,25 @@ export default function ToolsPage() {
             >
               <strong>📑 Financial Quality Analyst</strong>
               <span>
-                AI-powered financial quality analysis using SEC filings, calculated indicators and historical financial trends.
+                AI-powered financial quality analysis using SEC filings,
+                calculated indicators and historical financial trends.
               </span>
             </a>
 
             <Link className={styles.simpleCard} href='/valuation-analyst'>
               <strong>🧮 Valuation Analyst</strong>
               <span>
-                Prepare DCF and relative valuation inputs with guided uploads for
-                historical financials, capital structure, peers and optional estimates.
+                Prepare DCF and relative valuation inputs with guided uploads
+                for historical financials, capital structure, peers and optional
+                estimates.
+              </span>
+            </Link>
+
+            <Link className={styles.simpleCard} href='/financial-skills'>
+              <strong>📚 Financial Skills</strong>
+              <span>
+                Prepare research briefs with 18 modeling and equity-research
+                workflows, then run them in Claude with your source files.
               </span>
             </Link>
           </div>
