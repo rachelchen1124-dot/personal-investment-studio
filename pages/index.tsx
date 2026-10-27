@@ -144,17 +144,18 @@ function HomeSnapshot() {
             >
               <strong>📑 Financial Quality Analyst</strong>
               <span>
-                AI-powered financial quality analysis using SEC filings,
-                calculated indicators and historical financial trends.
+                Review uploaded financial statements, cash generation and
+                balance-sheet resilience, with source checks and optional AI
+                commentary.
               </span>
             </a>
 
             <Link className={styles.simpleCard} href='/valuation-analyst'>
               <strong>🧮 Valuation Analyst</strong>
               <span>
-                Prepare DCF and relative valuation inputs with guided uploads
-                for historical financials, capital structure, peers and optional
-                estimates.
+                Calculate DCF and relative valuation from manual uploads, with
+                sourced WACC assumptions, sensitivity analysis and a linked
+                Excel model.
               </span>
             </Link>
           </div>
