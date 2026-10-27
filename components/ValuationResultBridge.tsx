@@ -2,7 +2,7 @@ import type { calculateDcf } from '@/lib/valuation/engine'
 import styles from '@/styles/ValuationIntake.module.css'
 
 const value = (amount: number) =>
-  amount.toLocaleString('en-GB', {
+  (amount === 0 ? 0 : amount).toLocaleString('en-GB', {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2
   })

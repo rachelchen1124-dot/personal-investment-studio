@@ -2361,7 +2361,7 @@ export function ValuationModelRunner({
                       <th scope='col'>WACC / growth</th>
                       {dcfRun.sensitivity[0]!.cells.map((cell) => (
                         <th key={cell.growth} scope='col'>
-                          {percent(cell.growth)}
+                          {(cell.growth * 100).toFixed(2)}%
                         </th>
                       ))}
                     </tr>
@@ -2369,7 +2369,7 @@ export function ValuationModelRunner({
                   <tbody>
                     {dcfRun.sensitivity.map((row) => (
                       <tr key={row.wacc}>
-                        <th scope='row'>{percent(row.wacc)}</th>
+                        <th scope='row'>{(row.wacc * 100).toFixed(2)}%</th>
                         {row.cells.map((cell) => (
                           <td
                             key={cell.growth}
